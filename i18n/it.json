@@ -1,0 +1,78 @@
+{
+  "nav": {
+    "home": "Home",
+    "about": "Chi Siamo",
+    "menu": "Menu",
+    "gallery": "Galleria",
+    "contact": "Contatti"
+  },
+  "hero": {
+    "title": "RISTORANTE PIZZERIA MONOPOLI",
+    "subtitle": "Dove la tradizione incontra il sapore del mare.",
+    "button": "Scopri il Menu"
+  },
+  "about": {
+    "title": "La Nostra Storia",
+    "p1": "Nel cuore di Monopoli, il nostro ristorante nasce dalla passione per la cucina autentica pugliese e l'amore per il mare. Da generazioni, la nostra famiglia si dedica a portare in tavola solo il pesce più fresco e gli ingredienti più genuini, selezionati dai migliori produttori locali.",
+    "p2": "La nostra filosofia è semplice: celebrare i sapori della nostra terra con ricette che rispettano la tradizione, ma con un tocco di creatività che le rende uniche. Ogni piatto è un viaggio sensoriale, un'esperienza che vogliamo condividere con voi.",
+    "p3": "Vi invitiamo a scoprire il nostro mondo, fatto di gusto, passione e ospitalità."
+  },
+  "menu": {
+    "title": "Il Nostro Menu",
+    "subtitle": "Assapora il meglio del mare con i nostri piatti preparati con pesce freschissimo e ingredienti di prima qualità.",
+    "button": "Visualizza il Menu Completo",
+    "pdfButton": "Scarica Menu PDF",
+    "modalTitle": "Il Nostro Menu Completo",
+    "categories": {
+      "antipasti": "Antipasti",
+      "primi": "Primi Piatti",
+      "secondi": "Secondi Piatti"
+    },
+    "data": {
+      "antipasti": [
+        { "name": "Insalata di Mare", "description": "Polpo, seppie, gamberi e cozze con verdure fresche", "price": "€14" },
+        { "name": "Carpaccio di Spada", "description": "Pesce spada affumicato con rucola, pomodorini e scaglie di grana", "price": "€16" },
+        { "name": "Cozze Gratinate", "description": "Cozze al forno con pangrattato aromatizzato", "price": "€12" }
+      ],
+      "primi": [
+        { "name": "Spaghetti ai Frutti di Mare", "description": "Un classico con vongole, cozze, gamberi e calamari", "price": "€18" },
+        { "name": "Risotto alla Pescatora", "description": "Riso Carnaroli mantecato con il meglio del pescato del giorno", "price": "€20" },
+        { "name": "Cavatelli con Cime di Rapa e Vongole", "description": "Pasta fresca pugliese con un connubio di terra e mare", "price": "€17" }
+      ],
+      "secondi": [
+        { "name": "Grigliata Mista di Pesce", "description": "Pesce spada, gamberoni, seppie e scampi alla griglia", "price": "€25" },
+        { "name": "Frittura di Paranza", "description": "Pesce fresco di piccola taglia fritto croccante", "price": "€22" },
+        { "name": "Orata al Sale", "description": "Orata fresca cotta in crosta di sale per preservarne la morbidezza", "price": "€24" }
+      ]
+    }
+  },
+  "gallery": {
+    "title": "Galleria"
+  },
+  "contact": {
+    "title": "Contattaci",
+    "addressTitle": "Indirizzo",
+    "addressLine1": "Via Porto, 43/45",
+    "addressLine2": "70043 Monopoli (BA)",
+    "mapLink": "Visualizza sulla Mappa",
+    "hoursTitle": "Orari di Apertura",
+    "hoursLine1": "Pranzo: 12:30 - 15:00",
+    "hoursLine2": "Cena: 19:30 - 23:00",
+    "hoursLine3": "Chiuso il Martedì",
+    "reservationsTitle": "Prenotazioni",
+    "reservationsLine1": "Chiamaci al"
+  },
+  "loyalty": {
+    "title": "Programma Fedeltà",
+    "description": "Unisciti al nostro programma fedeltà e accumula punti per ogni pasto. Ricevi premi esclusivi e sconti speciali!",
+    "addToWallet": "Aggiungi al Wallet",
+    "googlePay": "Google Pay",
+    "appleWallet": "Apple Wallet"
+  },
+  "footer": {
+    "subtitle": "Ristorante di Pesce a Monopoli",
+    "backToTop": "Torna su",
+    "copyright": "Tutti i diritti riservati.",
+    "credit": "Sito web realizzato con amore"
+  }
+}

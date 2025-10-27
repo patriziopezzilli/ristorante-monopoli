@@ -1,0 +1,78 @@
+{
+  "nav": {
+    "home": "Home",
+    "about": "About Us",
+    "menu": "Menu",
+    "gallery": "Gallery",
+    "contact": "Contact"
+  },
+  "hero": {
+    "title": "RISTORANTE PIZZERIA MONOPOLI",
+    "subtitle": "Where tradition meets the flavor of the sea.",
+    "button": "Discover the Menu"
+  },
+  "about": {
+    "title": "Our Story",
+    "p1": "In the heart of Monopoli, our restaurant was born from a passion for authentic Apulian cuisine and a love for the sea. For generations, our family has been dedicated to bringing only the freshest fish and most genuine ingredients to your table, selected from the best local producers.",
+    "p2": "Our philosophy is simple: to celebrate the flavors of our land with recipes that respect tradition, but with a touch of creativity that makes them unique. Every dish is a sensory journey, an experience we want to share with you.",
+    "p3": "We invite you to discover our world, made of taste, passion, and hospitality."
+  },
+  "menu": {
+    "title": "Our Menu",
+    "subtitle": "Savor the best of the sea with our dishes prepared with the freshest fish and highest quality ingredients.",
+    "button": "View Full Menu",
+    "pdfButton": "Download Menu PDF",
+    "modalTitle": "Our Full Menu",
+    "categories": {
+      "antipasti": "Appetizers",
+      "primi": "First Courses",
+      "secondi": "Main Courses"
+    },
+    "data": {
+      "antipasti": [
+        { "name": "Seafood Salad", "description": "Octopus, cuttlefish, shrimp, and mussels with fresh vegetables", "price": "€14" },
+        { "name": "Swordfish Carpaccio", "description": "Smoked swordfish with arugula, cherry tomatoes, and parmesan flakes", "price": "€16" },
+        { "name": "Gratinated Mussels", "description": "Oven-baked mussels with flavored breadcrumbs", "price": "€12" }
+      ],
+      "primi": [
+        { "name": "Spaghetti with Seafood", "description": "A classic with clams, mussels, shrimp, and squid", "price": "€18" },
+        { "name": "Fisherman's Risotto", "description": "Carnaroli rice with the best catch of the day", "price": "€20" },
+        { "name": "Cavatelli with Turnip Greens and Clams", "description": "Fresh Apulian pasta with a blend of land and sea", "price": "€17" }
+      ],
+      "secondi": [
+        { "name": "Mixed Grilled Fish", "description": "Grilled swordfish, prawns, cuttlefish, and langoustines", "price": "€25" },
+        { "name": "Fried Small Fish", "description": "Crispy fried fresh small fish", "price": "€22" },
+        { "name": "Sea Bream in Salt Crust", "description": "Fresh sea bream cooked in a salt crust to preserve its tenderness", "price": "€24" }
+      ]
+    }
+  },
+  "gallery": {
+    "title": "Gallery"
+  },
+  "contact": {
+    "title": "Contact Us",
+    "addressTitle": "Address",
+    "addressLine1": "Via Porto, 43/45",
+    "addressLine2": "70043 Monopoli (BA)",
+    "mapLink": "View on Map",
+    "hoursTitle": "Opening Hours",
+    "hoursLine1": "Lunch: 12:30 - 15:00",
+    "hoursLine2": "Dinner: 19:30 - 23:00",
+    "hoursLine3": "Closed on Tuesday",
+    "reservationsTitle": "Reservations",
+    "reservationsLine1": "Call us at"
+  },
+  "loyalty": {
+    "title": "Loyalty Program",
+    "description": "Join our loyalty program and earn points for every meal. Receive exclusive rewards and special discounts!",
+    "addToWallet": "Add to Wallet",
+    "googlePay": "Google Pay",
+    "appleWallet": "Apple Wallet"
+  },
+  "footer": {
+    "subtitle": "Seafood Restaurant in Monopoli",
+    "backToTop": "Back to Top",
+    "copyright": "All rights reserved.",
+    "credit": "Website made with love"
+  }
+}
