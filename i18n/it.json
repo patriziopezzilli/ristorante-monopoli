@@ -63,8 +63,8 @@
     "reservationsLine1": "Chiamaci al"
   },
   "loyalty": {
-    "title": "Programma Fedeltà",
-    "description": "Unisciti al nostro programma fedeltà e accumula punti per ogni pasto. Ricevi premi esclusivi e sconti speciali!",
+    "title": "Qualcosa Bolle in Pentola",
+    "description": "Stiamo preparando qualcosa di speciale per i nostri clienti fedeli. Al momento è work in progress, ma presto avrete delle sorprese!",
     "addToWallet": "Aggiungi al Wallet",
     "googlePay": "Google Pay",
     "appleWallet": "Apple Wallet"

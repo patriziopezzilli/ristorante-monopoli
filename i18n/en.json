@@ -63,8 +63,8 @@
     "reservationsLine1": "Call us at"
   },
   "loyalty": {
-    "title": "Loyalty Program",
-    "description": "Join our loyalty program and earn points for every meal. Receive exclusive rewards and special discounts!",
+    "title": "Something's Cooking",
+    "description": "We're preparing something special for our loyal customers. It's currently work in progress, but you'll have surprises soon!",
     "addToWallet": "Add to Wallet",
     "googlePay": "Google Pay",
     "appleWallet": "Apple Wallet"
