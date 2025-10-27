@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import MenuModal from './MenuModal';
 import { useI18n } from '../i18n/I18nContext';
 
@@ -20,10 +20,49 @@ const MenuCard: React.FC<{ item: MenuItem }> = ({ item }) => (
 
 const Menu: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const [menuData, setMenuData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const menuData = t('menu.data');
+  // Load menu data from "database" (localStorage) or use defaults
+  useEffect(() => {
+    const loadMenuData = () => {
+      setIsLoading(true);
+      
+      // Try to load from localStorage first (uploaded menu)
+      const dbKey = `menuData_${language}`;
+      const savedMenuData = localStorage.getItem(dbKey);
+      
+      if (savedMenuData) {
+        try {
+          const parsedData = JSON.parse(savedMenuData);
+          setMenuData(parsedData);
+        } catch (error) {
+          console.error('Error parsing saved menu data:', error);
+          setMenuData(t('menu.data'));
+        }
+      } else {
+        // Use default translations
+        setMenuData(t('menu.data'));
+      }
+      
+      setIsLoading(false);
+    };
+
+    loadMenuData();
+  }, [language, t]);
+
   const menuCategories = t('menu.categories');
+
+  if (isLoading) {
+    return (
+      <section id="menu" className="py-20 bg-white">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <p className="text-gray-600">Caricamento menu...</p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section id="menu" className="py-20 bg-white">

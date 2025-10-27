@@ -162,12 +162,19 @@ const getInitialLanguage = (): Language => {
 export const I18nProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguage] = useState<Language>(getInitialLanguage);
 
+  const changeLanguage = (lang: Language) => {
+    setLanguage(lang);
+    localStorage.setItem('i18n-lang', lang);
+    // Emit custom event for components that need to react to language changes
+    window.dispatchEvent(new CustomEvent('languageChange', { detail: { language: lang } }));
+  };
+
   const t = (key: string): any => {
     return key.split('.').reduce((obj, k) => obj && obj[k], translations[language]);
   };
 
   return (
-    <I18nContext.Provider value={{ language, setLanguage, t }}>
+    <I18nContext.Provider value={{ language, setLanguage: changeLanguage, t }}>
       {children}
     </I18nContext.Provider>
   );
