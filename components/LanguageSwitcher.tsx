@@ -1,5 +1,6 @@
 import React from 'react';
 import { useI18n } from '../i18n/I18nContext';
+import { analyticsService } from '../src/analytics';
 
 const LanguageSwitcher: React.FC = () => {
   const { language, setLanguage } = useI18n();
@@ -11,11 +12,17 @@ const LanguageSwitcher: React.FC = () => {
 
   return (
     <div className="flex items-center space-x-2">
-      <button onClick={() => setLanguage('it')} className={buttonClasses('it')}>
+      <button onClick={() => {
+        analyticsService.trackLanguageSwitch(language, 'it');
+        setLanguage('it');
+      }} className={buttonClasses('it')}>
         IT
       </button>
       <span className="text-gray-400">/</span>
-      <button onClick={() => setLanguage('en')} className={buttonClasses('en')}>
+      <button onClick={() => {
+        analyticsService.trackLanguageSwitch(language, 'en');
+        setLanguage('en');
+      }} className={buttonClasses('en')}>
         EN
       </button>
     </div>

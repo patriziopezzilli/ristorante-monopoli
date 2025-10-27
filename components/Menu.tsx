@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import MenuModal from './MenuModal';
 import { useI18n } from '../i18n/I18nContext';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../src/firebase';
+import { analyticsService } from '../src/analytics';
 
 interface MenuItem {
   name: string;
@@ -24,25 +27,19 @@ const Menu: React.FC = () => {
   const [menuData, setMenuData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load menu data from "database" (localStorage) or use defaults
+  // Load menu data from Firebase Function
   useEffect(() => {
-    const loadMenuData = () => {
+    const loadMenuData = async () => {
       setIsLoading(true);
       
-      // Try to load from localStorage first (uploaded menu)
-      const dbKey = `menuData_${language}`;
-      const savedMenuData = localStorage.getItem(dbKey);
-      
-      if (savedMenuData) {
-        try {
-          const parsedData = JSON.parse(savedMenuData);
-          setMenuData(parsedData);
-        } catch (error) {
-          console.error('Error parsing saved menu data:', error);
-          setMenuData(t('menu.data'));
-        }
-      } else {
-        // Use default translations
+      try {
+        // Call Firebase Function to get menu data
+        const getMenu = httpsCallable(functions, 'getMenu');
+        const result = await getMenu({ language });
+        setMenuData(result.data);
+      } catch (error) {
+        console.error('Error loading menu data:', error);
+        // Fallback to defaults
         setMenuData(t('menu.data'));
       }
       
@@ -50,6 +47,22 @@ const Menu: React.FC = () => {
     };
 
     loadMenuData();
+
+    // Track menu view
+    analyticsService.trackMenuView('menu_section');
+
+    // Listen for menu updates
+    const handleMenuUpdate = (event: CustomEvent) => {
+      if (event.detail.language === language) {
+        loadMenuData();
+      }
+    };
+
+    window.addEventListener('menuUpdated', handleMenuUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('menuUpdated', handleMenuUpdate as EventListener);
+    };
   }, [language, t]);
 
   const menuCategories = t('menu.categories');

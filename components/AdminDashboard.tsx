@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { db } from '../src/firebase';
+import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../src/firebase';
+import { contentCache } from '../src/contentCache';
+import { analyticsService } from '../src/analytics';
 
 interface MenuUpload {
   language: 'it' | 'en';
@@ -17,6 +23,11 @@ const AdminDashboard: React.FC = () => {
     { language: 'en', file: null, lastUpload: null, fileName: null }
   ]);
   const [uploadStatus, setUploadStatus] = useState<string>('');
+  const [contentLanguage, setContentLanguage] = useState<'it' | 'en'>('it');
+  const [contentSection, setContentSection] = useState<string>('hero');
+  const [contentKey, setContentKey] = useState<string>('title');
+  const [contentValue, setContentValue] = useState<string>('');
+  const [contentStatus, setContentStatus] = useState<string>('');
 
   const handleLogout = () => {
     logout();
@@ -32,13 +43,31 @@ const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Mock metrics
-  const metrics = {
-    totalVisits: 1250,
-    menuViews: 340,
-    contactForms: 15,
+  const [metrics, setMetrics] = useState({
+    totalVisits: 0,
+    menuViews: 0,
+    contactForms: 0,
     averageRating: 4.8
-  };
+  });
+
+  // Load real metrics on component mount
+  useEffect(() => {
+    const loadMetrics = async () => {
+      try {
+        const realMetrics = await analyticsService.getMetrics();
+        setMetrics({
+          totalVisits: realMetrics.page_views || 0,
+          menuViews: realMetrics.menu_views || 0,
+          contactForms: realMetrics.contact_form_submissions || 0,
+          averageRating: 4.8 // Keep mock rating for now
+        });
+      } catch (error) {
+        console.warn('Failed to load metrics:', error);
+      }
+    };
+
+    loadMetrics();
+  }, []);
 
   const handleFileSelect = (language: 'it' | 'en', file: File | null) => {
     if (file && file.type !== 'application/pdf') {
@@ -59,7 +88,7 @@ const AdminDashboard: React.FC = () => {
     setUploadStatus('');
   };
 
-  const handleUpload = (language: 'it' | 'en') => {
+  const handleUpload = async (language: 'it' | 'en') => {
     const upload = menuUploads.find(u => u.language === language);
     if (!upload?.file) {
       setUploadStatus('Seleziona un file prima di caricare');
@@ -69,13 +98,13 @@ const AdminDashboard: React.FC = () => {
     // Simulate PDF parsing and menu extraction
     setUploadStatus('Analisi del PDF in corso...');
     
-    setTimeout(() => {
-      // Simulate PDF parsing - in real app, this would parse the actual PDF
-      const extractedMenuData = extractMenuFromPDF(upload.file!, language);
+    try {
+      // Convert file to base64
+      const fileData = await fileToBase64(upload.file);
       
-      // Save to "database" (localStorage)
-      const dbKey = `menuData_${language}`;
-      localStorage.setItem(dbKey, JSON.stringify(extractedMenuData));
+      // Call Firebase Function
+      const processMenuPDF = httpsCallable(functions, 'processMenuPDF');
+      const result = await processMenuPDF({ fileData, language });
       
       // Update uploads
       const updatedUploads = menuUploads.map(u => 
@@ -88,9 +117,74 @@ const AdminDashboard: React.FC = () => {
       localStorage.setItem('menuUploads', JSON.stringify(updatedUploads));
       setUploadStatus(`Menu ${language === 'it' ? 'italiano' : 'inglese'} estratto e salvato con successo!`);
       
+      // Track menu upload
+      analyticsService.trackMenuUpload(upload.file.name, upload.file.size);
+      
+      // Dispatch event to update menu
+      window.dispatchEvent(new CustomEvent('menuUpdated', { detail: { language } }));
+      
       // Clear status after 5 seconds
       setTimeout(() => setUploadStatus(''), 5000);
-    }, 2000); // Simulate processing time
+    } catch (error) {
+      console.error('Error uploading menu:', error);
+      setUploadStatus('Errore nel caricamento del menu');
+    }
+  };
+
+  const handleUpdateContent = async () => {
+    if (!contentValue.trim()) {
+      setContentStatus('Inserisci un valore');
+      return;
+    }
+
+    try {
+      const updateContentFn = httpsCallable(functions, 'updateContent');
+      const result = await updateContentFn({
+        language: contentLanguage,
+        section: contentSection,
+        key: contentKey,
+        value: contentValue
+      });
+
+      // Invalidate cache for this language
+      contentCache.invalidateCache(contentLanguage);
+
+      // Track content edit
+      analyticsService.trackContentEdit(contentSection, 'update');
+
+      setContentStatus('Contenuto aggiornato con successo!');
+      setTimeout(() => setContentStatus(''), 3000);
+    } catch (error) {
+      console.error('Error updating content:', error);
+      setContentStatus('Errore nell\'aggiornamento del contenuto');
+    }
+  };
+
+  const handleMigrateContent = async () => {
+    try {
+      const migrateContentFn = httpsCallable(functions, 'migrateContent');
+      await migrateContentFn({});
+      setContentStatus('Migrazione contenuti completata!');
+      setTimeout(() => setContentStatus(''), 3000);
+    } catch (error) {
+      console.error('Error migrating content:', error);
+      setContentStatus('Errore nella migrazione contenuti');
+    }
+  };
+
+  // Helper function to convert file to base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        // Remove the data URL prefix (e.g., "data:application/pdf;base64,")
+        const base64Data = base64.split(',')[1];
+        resolve(base64Data);
+      };
+      reader.onerror = error => reject(error);
+    });
   };
 
   // Simulate PDF parsing - extract menu data from PDF
@@ -313,8 +407,98 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
           </div>
+        {/* Content Management Section */}
+        <div className="mt-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Gestione Contenuti Sito</h2>
+          
+          {contentStatus && (
+            <div className="mb-4 p-4 rounded-md bg-blue-50 border border-blue-200">
+              <p className="text-blue-800">{contentStatus}</p>
+            </div>
+          )}
+
+          <div className="bg-white shadow overflow-hidden sm:rounded-md">
+            <div className="px-4 py-5 sm:p-6">
+              <div className="mb-4">
+                <button
+                  onClick={handleMigrateContent}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-md text-sm"
+                >
+                  Migra Contenuti (Prima volta)
+                </button>
+                <p className="text-sm text-gray-600 mt-2">Esegui una volta per migrare i contenuti esistenti su database</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Lingua</label>
+                  <select
+                    value={contentLanguage}
+                    onChange={(e) => setContentLanguage(e.target.value as 'it' | 'en')}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  >
+                    <option value="it">Italiano</option>
+                    <option value="en">English</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
+                  <select
+                    value={contentSection}
+                    onChange={(e) => setContentSection(e.target.value)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  >
+                    <option value="nav">Navigazione</option>
+                    <option value="hero">Hero</option>
+                    <option value="about">About</option>
+                    <option value="menu">Menu</option>
+                    <option value="contact">Contatti</option>
+                    <option value="footer">Footer</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Campo</label>
+                  <input
+                    type="text"
+                    value={contentKey}
+                    onChange={(e) => setContentKey(e.target.value)}
+                    placeholder="es: title, subtitle"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Valore</label>
+                  <input
+                    type="text"
+                    value={contentValue}
+                    onChange={(e) => setContentValue(e.target.value)}
+                    placeholder="Nuovo testo"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleUpdateContent}
+                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-md text-sm"
+              >
+                Aggiorna Contenuto
+              </button>
+
+              <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                <h4 className="text-sm font-medium text-yellow-800 mb-2">💡 Sistema Cache</h4>
+                <ul className="text-sm text-yellow-700 space-y-1">
+                  <li>• Cache automatica: 15 giorni di durata</li>
+                  <li>• Invalidazione: Quando modifichi, la cache si aggiorna</li>
+                  <li>• Versioning: Ogni modifica incrementa la versione per forzare aggiornamenti</li>
+                  <li>• Fallback: Se offline, usa dati cached anche se scaduti</li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
     </div>
   );
 };

@@ -1,15 +1,18 @@
 import React from 'react';
 import { useI18n } from '../i18n/I18nContext';
+import { analyticsService } from '../src/analytics';
 
 const LoyaltyCard: React.FC = () => {
   const { t } = useI18n();
 
   const addToGooglePay = () => {
+    analyticsService.trackLoyaltyCardClick('google_pay');
     // Placeholder: In a real implementation, this would generate or link to a Google Pay pass
     alert('Questa funzionalità è ancora in sviluppo. Qualcosa di speciale sta arrivando presto! 🍳');
   };
 
   const addToAppleWallet = () => {
+    analyticsService.trackLoyaltyCardClick('apple_wallet');
     // Placeholder: In a real implementation, this would generate or link to an Apple Wallet pass
     alert('Questa funzionalità è ancora in sviluppo. Qualcosa di speciale sta arrivando presto! 🍳');
   };
