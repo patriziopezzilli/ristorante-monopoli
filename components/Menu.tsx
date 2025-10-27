@@ -34,7 +34,7 @@ const Menu: React.FC = () => {
            <p className="mt-6 max-w-2xl mx-auto text-gray-600">
             {t('menu.subtitle')}
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <div className="flex flex-col sm:flex-row gap-8 justify-center items-center mt-8">
             <button
               onClick={() => setIsModalOpen(true)}
               className="bg-gray-800 hover:bg-black text-white font-semibold py-3 px-8 rounded-md text-base uppercase tracking-wider transition duration-300 ease-in-out transform hover:scale-105"
