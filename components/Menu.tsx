@@ -47,7 +47,7 @@ const Menu: React.FC = () => {
               rel="noopener noreferrer"
               className="bg-white hover:bg-gray-50 text-gray-800 font-semibold py-3 px-8 rounded-md text-base uppercase tracking-wider transition duration-300 ease-in-out transform hover:scale-105 border-2 border-gray-800"
             >
-              {t('menu.pdfButton')}
+              OPEN PDF MENU
             </a>
           </div>
         </div>

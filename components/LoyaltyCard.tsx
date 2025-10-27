@@ -25,7 +25,7 @@ const LoyaltyCard: React.FC = () => {
         <div className="flex justify-center">
           <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
             <div className="text-center mb-6">
-              <div className="bg-gradient-to-r from-orange-400 to-red-500 text-white rounded-lg p-6 mb-4">
+              <div className="bg-gray-100 text-gray-800 rounded-lg p-6 mb-4 border border-gray-200">
                 <h3 className="text-xl font-bold mb-2">🍳 Work in Progress</h3>
                 <p className="text-sm opacity-90">Qualcosa di speciale sta arrivando...</p>
                 <div className="mt-4 text-2xl font-bold">🚀 Presto Disponibile</div>
