@@ -24,7 +24,8 @@ interface I18nProviderProps {
 
 export const I18nProvider: React.FC<I18nProviderProps> = ({ children }) => {
   const [language, setLanguageState] = useState<'it' | 'en'>(() => {
-    return (localStorage.getItem('language') as 'it' | 'en') || 'it';
+    const stored = localStorage.getItem('language');
+    return (stored as 'it' | 'en') || 'it';
   });
   const [translations, setTranslations] = useState<any>({});
   const [isLoading, setIsLoading] = useState(true);

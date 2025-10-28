@@ -30,6 +30,11 @@ const Menu: React.FC = () => {
   // Load menu data from Firebase Function
   useEffect(() => {
     const loadMenuData = async () => {
+      // Only load if language is available
+      if (!language) {
+        return;
+      }
+      
       setIsLoading(true);
       
       try {
@@ -67,7 +72,7 @@ const Menu: React.FC = () => {
 
   const menuCategories = t('menu.categories');
 
-  if (isLoading) {
+  if (isLoading || !menuData) {
     return (
       <section id="menu" className="py-20 bg-white">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 text-center">

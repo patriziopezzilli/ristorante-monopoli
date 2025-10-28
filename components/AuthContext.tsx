@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { auth } from '../src/firebase';
 
 interface AuthContextType {
@@ -28,12 +28,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setIsAuthenticated(!!user);
-    });
+    const initAuth = async () => {
+      // Set persistence before listening to auth state changes
+      await setPersistence(auth, browserLocalPersistence);
+      
+      const unsubscribe = onAuthStateChanged(auth, (user) => {
+        setCurrentUser(user);
+        setIsAuthenticated(!!user);
+      });
 
-    return unsubscribe;
+      return unsubscribe;
+    };
+
+    const unsubscribePromise = initAuth();
+
+    return () => {
+      unsubscribePromise.then(unsubscribe => unsubscribe());
+    };
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {

@@ -1,4 +1,7 @@
 // Content cache service with 15-day expiration and version-based invalidation
+import { httpsCallable } from 'firebase/functions';
+import { functions } from './firebase';
+
 class ContentCacheService {
   private static instance: ContentCacheService;
   private cache: Map<string, { data: any; timestamp: number; version: number; lastVersionCheck?: number }> = new Map();
@@ -22,6 +25,11 @@ class ContentCacheService {
   }
 
   async getContent(language: string, forceRefresh = false): Promise<any> {
+    // Validate language parameter
+    if (!language) {
+      throw new Error('Language is required for content loading');
+    }
+
     const cacheKey = this.getCacheKey(language);
 
     // Check localStorage first
@@ -45,11 +53,9 @@ class ContentCacheService {
 
     // Fetch from server
     try {
-      const { httpsCallable } = await import('firebase/functions');
-      const { functions } = await import('../src/firebase');
-
       const getContent = httpsCallable(functions, 'getContent');
       const result = await getContent({ language });
+      console.log('ContentCache.getContent: Received result from Firebase:', result);
 
       const resultData = result.data as { version?: number; [key: string]: any };
 
@@ -95,10 +101,12 @@ class ContentCacheService {
   }
 
   async checkForUpdates(language: string): Promise<boolean> {
+    // Validate language parameter
+    if (!language) {
+      console.warn('Language is required for content updates check');
+      return false;
+    }
     try {
-      const { httpsCallable } = await import('firebase/functions');
-      const { functions } = await import('../src/firebase');
-
       const getContent = httpsCallable(functions, 'getContent');
       const result = await getContent({ language });
 

@@ -16,7 +16,7 @@ interface MenuUpload {
 }
 
 const AdminDashboard: React.FC = () => {
-  const { logout } = useAuth();
+  const { logout, currentUser } = useAuth();
   const navigate = useNavigate();
   const [menuUploads, setMenuUploads] = useState<MenuUpload[]>([
     { language: 'it', file: null, lastUpload: null, fileName: null },
@@ -25,9 +25,17 @@ const AdminDashboard: React.FC = () => {
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [contentLanguage, setContentLanguage] = useState<'it' | 'en'>('it');
   const [contentSection, setContentSection] = useState<string>('hero');
-  const [contentKey, setContentKey] = useState<string>('title');
-  const [contentValue, setContentValue] = useState<string>('');
   const [contentStatus, setContentStatus] = useState<string>('');
+  const [currentContents, setCurrentContents] = useState<Record<string, string>>({});
+
+  const sectionKeys: Record<string, string[]> = {
+    nav: ['home', 'about', 'menu', 'gallery', 'contact'],
+    hero: ['title', 'subtitle', 'button'],
+    about: ['title', 'p1', 'p2', 'p3'],
+    menu: ['title', 'subtitle', 'button', 'pdfButton', 'modalTitle'],
+    contact: ['title', 'addressTitle', 'addressLine1', 'addressLine2', 'mapLink', 'hoursTitle', 'hoursLine1', 'hoursLine2', 'hoursLine3', 'reservationsTitle', 'reservationsLine1'],
+    footer: ['text']
+  };
 
   const handleLogout = () => {
     logout();
@@ -100,11 +108,15 @@ const AdminDashboard: React.FC = () => {
     
     try {
       // Convert file to base64
+      console.log('Converting file to base64...');
       const fileData = await fileToBase64(upload.file);
+      console.log('File converted to base64, length:', fileData.length);
       
       // Call Firebase Function
+      console.log('Calling Firebase Function processMenuPDF...');
       const processMenuPDF = httpsCallable(functions, 'processMenuPDF');
       const result = await processMenuPDF({ fileData, language });
+      console.log('Firebase Function result:', result);
       
       // Update uploads
       const updatedUploads = menuUploads.map(u => 
@@ -127,13 +139,18 @@ const AdminDashboard: React.FC = () => {
       setTimeout(() => setUploadStatus(''), 5000);
     } catch (error) {
       console.error('Error uploading menu:', error);
-      setUploadStatus('Errore nel caricamento del menu');
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details
+      });
+      setUploadStatus(`Errore nel caricamento del menu: ${error.message || 'Errore sconosciuto'}`);
     }
   };
 
-  const handleUpdateContent = async () => {
-    if (!contentValue.trim()) {
-      setContentStatus('Inserisci un valore');
+  const handleUpdateContent = async (key: string, value: string) => {
+    if (!currentUser) {
+      setContentStatus('Utente non autenticato. Effettua nuovamente il login.');
       return;
     }
 
@@ -142,9 +159,12 @@ const AdminDashboard: React.FC = () => {
       const result = await updateContentFn({
         language: contentLanguage,
         section: contentSection,
-        key: contentKey,
-        value: contentValue
+        key,
+        value
       });
+
+      // Update local state
+      setCurrentContents(prev => ({ ...prev, [key]: value }));
 
       // Invalidate cache for this language
       contentCache.invalidateCache(contentLanguage);
@@ -160,17 +180,23 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handleMigrateContent = async () => {
+  const loadCurrentContents = async () => {
     try {
-      const migrateContentFn = httpsCallable(functions, 'migrateContent');
-      await migrateContentFn({});
-      setContentStatus('Migrazione contenuti completata!');
-      setTimeout(() => setContentStatus(''), 3000);
+      const getContentFn = httpsCallable(functions, 'getContent');
+      const result = await getContentFn({ language: contentLanguage });
+      const contentData = result.data as Record<string, Record<string, string>>;
+      setCurrentContents(contentData[contentSection] || {});
     } catch (error) {
-      console.error('Error migrating content:', error);
-      setContentStatus('Errore nella migrazione contenuti');
+      console.error('Error loading content:', error);
+      // No fallback, leave empty
+      setCurrentContents({});
     }
   };
+
+  // Load contents when language or section changes
+  useEffect(() => {
+    loadCurrentContents();
+  }, [contentLanguage, contentSection]);
 
   // Helper function to convert file to base64
   const fileToBase64 = (file: File): Promise<string> => {
@@ -419,71 +445,85 @@ const AdminDashboard: React.FC = () => {
 
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
             <div className="px-4 py-5 sm:p-6">
-              <div className="mb-4">
-                <button
-                  onClick={handleMigrateContent}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-md text-sm"
+              {/* Language Toggle */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">Lingua</label>
+                <div className="flex bg-gray-100 rounded-lg p-1 w-fit">
+                  <button
+                    onClick={() => setContentLanguage('it')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      contentLanguage === 'it'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Italiano
+                  </button>
+                  <button
+                    onClick={() => setContentLanguage('en')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      contentLanguage === 'en'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+
+              {/* Section Select */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
+                <select
+                  value={contentSection}
+                  onChange={(e) => setContentSection(e.target.value)}
+                  className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  Migra Contenuti (Prima volta)
+                  <option value="nav">Navigazione</option>
+                  <option value="hero">Hero</option>
+                  <option value="about">About</option>
+                  <option value="menu">Menu</option>
+                  <option value="contact">Contatti</option>
+                  <option value="footer">Footer</option>
+                </select>
+              </div>
+
+              {/* Content Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                {sectionKeys[contentSection]?.map((key) => (
+                  <div key={key} className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2 capitalize">
+                      {key.replace(/([A-Z])/g, ' $1').trim()}
+                    </label>
+                    <input
+                      type="text"
+                      value={currentContents[key] || ''}
+                      onChange={(e) => setCurrentContents(prev => ({ ...prev, [key]: e.target.value }))}
+                      placeholder={`Inserisci ${key}`}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Save Button */}
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    // Save all fields
+                    sectionKeys[contentSection]?.forEach(key => {
+                      const value = currentContents[key] || '';
+                      if (value.trim()) {
+                        handleUpdateContent(key, value);
+                      }
+                    });
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-md text-sm transition duration-200"
+                >
+                  Salva Modifiche
                 </button>
-                <p className="text-sm text-gray-600 mt-2">Esegui una volta per migrare i contenuti esistenti su database</p>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Lingua</label>
-                  <select
-                    value={contentLanguage}
-                    onChange={(e) => setContentLanguage(e.target.value as 'it' | 'en')}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  >
-                    <option value="it">Italiano</option>
-                    <option value="en">English</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
-                  <select
-                    value={contentSection}
-                    onChange={(e) => setContentSection(e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  >
-                    <option value="nav">Navigazione</option>
-                    <option value="hero">Hero</option>
-                    <option value="about">About</option>
-                    <option value="menu">Menu</option>
-                    <option value="contact">Contatti</option>
-                    <option value="footer">Footer</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Campo</label>
-                  <input
-                    type="text"
-                    value={contentKey}
-                    onChange={(e) => setContentKey(e.target.value)}
-                    placeholder="es: title, subtitle"
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Valore</label>
-                  <input
-                    type="text"
-                    value={contentValue}
-                    onChange={(e) => setContentValue(e.target.value)}
-                    placeholder="Nuovo testo"
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={handleUpdateContent}
-                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-md text-sm"
-              >
-                Aggiorna Contenuto
-              </button>
 
               <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
                 <h4 className="text-sm font-medium text-yellow-800 mb-2">💡 Sistema Cache</h4>

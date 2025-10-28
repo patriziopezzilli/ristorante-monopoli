@@ -33,4 +33,4 @@ export const auth = getAuth(app);
 export const analytics = getAnalytics(app);
 
 // Initialize Cloud Functions
-export const functions = getFunctions(app);
+export const functions = getFunctions(app, 'us-central1');

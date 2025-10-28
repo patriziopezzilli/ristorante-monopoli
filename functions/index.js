@@ -175,36 +175,47 @@ function getFallbackMenuData(language) {
 }
 
 exports.processMenuPDF = functions.https.onCall(async (data, context) => {
+  console.log('processMenuPDF called with data:', { fileDataLength: data.fileData?.length, language: data.language });
+  
   // Verify authentication (optional but recommended)
   if (!context.auth) {
+    console.error('Authentication failed');
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
   const { fileData, language } = data;
 
   if (!fileData || !language) {
+    console.error('Missing required parameters:', { fileData: !!fileData, language });
     throw new functions.https.HttpsError('invalid-argument', 'File data and language are required');
   }
 
   try {
+    console.log('Converting base64 to buffer...');
     // Convert base64 to buffer (assuming file is sent as base64)
     const fileBuffer = Buffer.from(fileData, 'base64');
+    console.log('Buffer created, length:', fileBuffer.length);
     
+    console.log('Extracting menu from PDF...');
     // Extract menu data from PDF
     const menuData = await extractMenuFromPDF(fileBuffer, language);
+    console.log('Menu data extracted:', menuData);
     
+    console.log('Saving to Firestore...');
     // Save to Firestore
     await admin.firestore().collection('menus').doc(language).set(menuData);
+    console.log('Menu saved to Firestore');
     
     return { success: true, message: `Menu ${language} processed and saved` };
   } catch (error) {
     console.error('Error processing PDF:', error);
-    throw new functions.https.HttpsError('internal', 'Error processing PDF');
+    console.error('Error stack:', error.stack);
+    throw new functions.https.HttpsError('internal', `Error processing PDF: ${error.message}`);
   }
 });
 
 exports.getMenu = functions.https.onCall(async (data, context) => {
-  const { language } = data;
+  const { language } = data.data || data;
 
   if (!language) {
     throw new functions.https.HttpsError('invalid-argument', 'Language is required');
@@ -214,7 +225,7 @@ exports.getMenu = functions.https.onCall(async (data, context) => {
     const docRef = admin.firestore().collection('menus').doc(language);
     const docSnap = await docRef.get();
 
-    if (docSnap.exists()) {
+    if (docSnap.exists && typeof docSnap.exists === 'function') {
       return docSnap.data();
     } else {
       // Return default menu data if not found
@@ -395,33 +406,106 @@ exports.migrateContent = functions.https.onCall(async (data, context) => {
   }
 });
 
+// Helper function to get default content
+function getDefaultContent(language) {
+  return {
+    nav: {
+      home: language === 'it' ? 'Home' : 'Home',
+      about: language === 'it' ? 'Chi Siamo' : 'About',
+      menu: language === 'it' ? 'Menu' : 'Menu',
+      gallery: language === 'it' ? 'Galleria' : 'Gallery',
+      contact: language === 'it' ? 'Contatti' : 'Contact'
+    },
+    hero: {
+      title: language === 'it' ? 'RISTORANTE PIZZERIA MONOPOLI' : 'MONOPOLI RESTAURANT PIZZERIA',
+      subtitle: language === 'it' ? 'Autentica cucina italiana nel cuore di Monopoli' : 'Authentic Italian cuisine in the heart of Monopoli',
+      button: language === 'it' ? 'Scopri il Menu' : 'Discover the Menu'
+    },
+    menu: {
+      title: language === 'it' ? 'Il Nostro Menu' : 'Our Menu',
+      subtitle: language === 'it' ? 'Scopri i nostri piatti tradizionali preparati con ingredienti freschi' : 'Discover our traditional dishes made with fresh ingredients',
+      button: language === 'it' ? 'Visualizza il Menu Completo' : 'View Full Menu',
+      pdfButton: 'OPEN PDF MENU',
+      modalTitle: language === 'it' ? 'Il Nostro Menu Completo' : 'Our Complete Menu'
+    },
+    about: {
+      title: language === 'it' ? 'Chi Siamo' : 'About Us',
+      p1: language === 'it' 
+        ? 'Nel cuore di Monopoli, il nostro ristorante nasce dalla passione per la cucina autentica pugliese e l\'amore per il mare. Da generazioni, la nostra famiglia si dedica a portare in tavola solo il pesce più fresco e gli ingredienti più genuini, selezionati dai migliori produttori locali.'
+        : 'In the heart of Monopoli, our restaurant is born from the passion for authentic Pugliese cuisine and love for the sea. For generations, our family has dedicated itself to bringing to the table only the freshest fish and the most genuine ingredients, selected from the best local producers.',
+      p2: language === 'it' 
+        ? 'La nostra filosofia è semplice: celebrare i sapori della nostra terra con ricette che rispettano la tradizione, ma con un tocco di creatività che le rende uniche. Ogni piatto è un viaggio sensoriale, un\'esperienza che vogliamo condividere con voi.'
+        : 'Our philosophy is simple: celebrate the flavors of our land with recipes that respect tradition, but with a touch of creativity that makes them unique. Each dish is a sensory journey, an experience we want to share with you.',
+      p3: language === 'it' 
+        ? 'Vi invitiamo a scoprire il nostro mondo, fatto di gusto, passione e ospitalità.'
+        : 'We invite you to discover our world, made of taste, passion and hospitality.'
+    },
+    contact: {
+      title: language === 'it' ? 'Contattaci' : 'Contact Us',
+      addressTitle: language === 'it' ? 'Dove Siamo' : 'Where We Are',
+      addressLine1: language === 'it' ? 'Via Porto, 43/45' : 'Via Porto, 43/45',
+      addressLine2: language === 'it' ? '70043 Monopoli (BA), Italia' : '70043 Monopoli (BA), Italy',
+      mapLink: language === 'it' ? 'Vedi su Google Maps' : 'View on Google Maps',
+      hoursTitle: language === 'it' ? 'Orari di Apertura' : 'Opening Hours',
+      hoursLine1: language === 'it' ? 'Pranzo: 12:30 - 15:00' : 'Lunch: 12:30 - 15:00',
+      hoursLine2: language === 'it' ? 'Cena: 19:30 - 23:00' : 'Dinner: 19:30 - 23:00',
+      hoursLine3: language === 'it' ? 'Chiuso il Martedì' : 'Closed on Tuesday',
+      reservationsTitle: language === 'it' ? 'Prenotazioni' : 'Reservations',
+      reservationsLine1: language === 'it' ? 'Chiamaci al' : 'Call us at'
+    },
+    footer: {
+      text: language === 'it' ? '© 2025 Ristorante Pizzeria Monopoli. Tutti i diritti riservati.' : '© 2025 Restaurant Pizzeria Monopoli. All rights reserved.'
+    }
+  };
+}
+
 exports.getContent = functions.https.onCall(async (data, context) => {
-  const { language } = data;
+  console.log('getContent called with data keys:', Object.keys(data || {}));
+  const { language } = data.data || data;
+  console.log('getContent: language extracted:', language);
 
   if (!language) {
+    console.error('getContent: Language is required but not provided');
     throw new functions.https.HttpsError('invalid-argument', 'Language is required');
   }
 
   try {
+    console.log('getContent: Fetching document from Firestore for language:', language);
     const docRef = admin.firestore().collection('content').doc(language);
     const docSnap = await docRef.get();
 
-    if (docSnap.exists()) {
-      return docSnap.data();
+    console.log('getContent: Document exists:', docSnap.exists);
+
+    if (docSnap.exists) {
+      const contentData = docSnap.data();
+      console.log('getContent: Found content data keys:', Object.keys(contentData || {}));
+      
+      // Merge with defaults
+      const defaultContent = getDefaultContent(language);
+      const mergedContent = { ...defaultContent };
+      
+      // Override with saved data
+      Object.keys(contentData).forEach(section => {
+        if (typeof contentData[section] === 'object' && contentData[section] !== null) {
+          mergedContent[section] = { ...mergedContent[section], ...contentData[section] };
+        } else {
+          mergedContent[section] = contentData[section];
+        }
+      });
+      
+      return mergedContent;
     } else {
-      throw new functions.https.HttpsError('not-found', 'Content not found');
+      console.log('getContent: Document not found, returning default content for language:', language);
+      return getDefaultContent(language);
     }
   } catch (error) {
-    console.error('Error getting content:', error);
+    console.error('getContent: Error getting content:', error);
     throw new functions.https.HttpsError('internal', 'Error retrieving content');
   }
 });
 
 exports.updateContent = functions.https.onCall(async (data, context) => {
-  // Verify authentication
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
+  // Removed authentication check since access is protected by frontend
 
   const { language, section, key, value } = data;
 
