@@ -1428,7 +1428,7 @@ const AdminDashboard: React.FC = () => {
                   ></div>
                   <div
                     className="absolute top-0 h-full w-12 bg-white border-2 border-orange-500 rounded-full shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center transform transition-transform duration-200"
-                    style={{ left: `calc(${sliderPosition}% - 24px)` }}
+                    style={{ left: `max(0px, calc(${sliderPosition}% - 24px))` }}
                     onMouseDown={handleSliderMouseDown}
                   >
                     <i className="fas fa-arrow-right text-orange-600"></i>
