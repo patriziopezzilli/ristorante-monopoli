@@ -29,10 +29,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     const initAuth = async () => {
-      // Set persistence before listening to auth state changes
-      await setPersistence(auth, browserLocalPersistence);
+      // Set persistence to LOCAL to maintain session across browser restarts
+      try {
+        await setPersistence(auth, browserLocalPersistence);
+        console.log('Firebase auth persistence set to LOCAL');
+      } catch (error) {
+        console.warn('Failed to set auth persistence:', error);
+      }
       
       const unsubscribe = onAuthStateChanged(auth, (user) => {
+        console.log('Auth state changed:', user ? 'logged in' : 'logged out');
         setCurrentUser(user);
         setIsAuthenticated(!!user);
       });

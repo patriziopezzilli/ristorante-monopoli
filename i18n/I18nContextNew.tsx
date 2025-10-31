@@ -29,7 +29,7 @@ export const I18nProvider: React.FC<I18nProviderProps> = ({ children }) => {
   const [translations, setTranslations] = useState<any>({});
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load translations when language changes
+    // Load translations when language changes
   useEffect(() => {
     const loadTranslations = async () => {
       setIsLoading(true);
@@ -50,6 +50,21 @@ export const I18nProvider: React.FC<I18nProviderProps> = ({ children }) => {
     };
 
     loadTranslations();
+
+    // Listen for content updates
+    const handleContentUpdate = (event: CustomEvent) => {
+      const { language: updatedLanguage } = event.detail;
+      if (updatedLanguage === language) {
+        console.log('Content updated for current language, reloading...');
+        loadTranslations();
+      }
+    };
+
+    window.addEventListener('contentUpdated', handleContentUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('contentUpdated', handleContentUpdate as EventListener);
+    };
   }, [language]);
 
   const setLanguage = (lang: 'it' | 'en') => {

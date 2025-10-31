@@ -51,6 +51,22 @@ export const I18nProvider: React.FC<I18nProviderProps> = ({ children }) => {
     };
 
     loadTranslations();
+
+    // Listen for content updates
+    const handleContentUpdate = (event: CustomEvent) => {
+      const { language: updatedLanguage } = event.detail;
+      console.log('📡 I18nContext received contentUpdated event for language:', updatedLanguage, 'current language:', language);
+      if (updatedLanguage === language) {
+        console.log('🔄 Reloading translations for language:', language);
+        loadTranslations();
+      }
+    };
+
+    window.addEventListener('contentUpdated', handleContentUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('contentUpdated', handleContentUpdate as EventListener);
+    };
   }, [language]);
 
   const setLanguage = (lang: 'it' | 'en') => {

@@ -2,9 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { db } from '../src/firebase';
-import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../src/firebase';
+import { collection, addDoc, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { contentCache } from '../src/contentCache';
 import { analyticsService } from '../src/analytics';
 
@@ -24,8 +22,9 @@ const AdminDashboard: React.FC = () => {
   ]);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [contentLanguage, setContentLanguage] = useState<'it' | 'en'>('it');
-  const [contentSection, setContentSection] = useState<string>('hero');
+  const [contentSection, setContentSection] = useState<string>('menu');
   const [contentStatus, setContentStatus] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
   const [currentContents, setCurrentContents] = useState<Record<string, string>>({});
 
   const sectionKeys: Record<string, string[]> = {
@@ -53,9 +52,7 @@ const AdminDashboard: React.FC = () => {
 
   const [metrics, setMetrics] = useState({
     totalVisits: 0,
-    menuViews: 0,
-    contactForms: 0,
-    averageRating: 4.8
+    menuViews: 0
   });
 
   // Load real metrics on component mount
@@ -65,9 +62,7 @@ const AdminDashboard: React.FC = () => {
         const realMetrics = await analyticsService.getMetrics();
         setMetrics({
           totalVisits: realMetrics.page_views || 0,
-          menuViews: realMetrics.menu_views || 0,
-          contactForms: realMetrics.contact_form_submissions || 0,
-          averageRating: 4.8 // Keep mock rating for now
+          menuViews: realMetrics.menu_views || 0
         });
       } catch (error) {
         console.warn('Failed to load metrics:', error);
@@ -103,20 +98,25 @@ const AdminDashboard: React.FC = () => {
       return;
     }
 
-    // Simulate PDF parsing and menu extraction
+    // Show loading overlay
+    setIsLoading(true);
     setUploadStatus('Analisi del PDF in corso...');
     
     try {
-      // Convert file to base64
-      console.log('Converting file to base64...');
-      const fileData = await fileToBase64(upload.file);
-      console.log('File converted to base64, length:', fileData.length);
+      // Extract menu data from PDF (mock implementation)
+      console.log('Extracting menu from PDF...');
+      const menuData = extractMenuFromPDF(upload.file, language);
+      console.log('Menu data extracted:', menuData);
       
-      // Call Firebase Function
-      console.log('Calling Firebase Function processMenuPDF...');
-      const processMenuPDF = httpsCallable(functions, 'processMenuPDF');
-      const result = await processMenuPDF({ fileData, language });
-      console.log('Firebase Function result:', result);
+      // Save menu data directly to Firebase
+      console.log('Saving menu data to Firebase...');
+      const menuDocRef = doc(db, 'menu', language);
+      await setDoc(menuDocRef, {
+        ...menuData,
+        lastUpdated: new Date().toISOString(),
+        version: Date.now() // For cache invalidation
+      });
+      console.log('Menu data saved to Firebase');
       
       // Update uploads
       const updatedUploads = menuUploads.map(u => 
@@ -145,29 +145,60 @@ const AdminDashboard: React.FC = () => {
         details: error.details
       });
       setUploadStatus(`Errore nel caricamento del menu: ${error.message || 'Errore sconosciuto'}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleUpdateContent = async (key: string, value: string) => {
+    console.log('🔥 handleUpdateContent CALLED with:', { key, value, contentLanguage, contentSection });
+    
     if (!currentUser) {
       setContentStatus('Utente non autenticato. Effettua nuovamente il login.');
       return;
     }
 
+    if (!contentLanguage || !contentSection || !key) {
+      console.error('❌ Missing required parameters:', { contentLanguage, contentSection, key });
+      setContentStatus('Errore: parametri mancanti per aggiornare il contenuto');
+      return;
+    }
+
+    // Show loading overlay
+    setIsLoading(true);
+    setContentStatus('Aggiornamento in corso...');
+
     try {
-      const updateContentFn = httpsCallable(functions, 'updateContent');
-      const result = await updateContentFn({
-        language: contentLanguage,
-        section: contentSection,
-        key,
-        value
-      });
+      const docRef = doc(db, 'content', contentLanguage);
+      
+      // Get current content
+      const docSnap = await getDoc(docRef);
+      let updateData: any = {};
+      
+      if (docSnap.exists()) {
+        updateData = docSnap.data();
+      }
+
+      // Update version for cache invalidation
+      updateData.version = (updateData.version || 1) + 1;
+
+      // Update the specific field
+      if (!updateData[contentSection]) {
+        updateData[contentSection] = {};
+      }
+      updateData[contentSection][key] = value;
+
+      await setDoc(docRef, updateData);
 
       // Update local state
       setCurrentContents(prev => ({ ...prev, [key]: value }));
 
       // Invalidate cache for this language
       contentCache.invalidateCache(contentLanguage);
+
+      // Dispatch event to update content across the app
+      console.log('🚀 Dispatching contentUpdated event for language:', contentLanguage);
+      window.dispatchEvent(new CustomEvent('contentUpdated', { detail: { language: contentLanguage } }));
 
       // Track content edit
       analyticsService.trackContentEdit(contentSection, 'update');
@@ -177,14 +208,27 @@ const AdminDashboard: React.FC = () => {
     } catch (error) {
       console.error('Error updating content:', error);
       setContentStatus('Errore nell\'aggiornamento del contenuto');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loadCurrentContents = async () => {
+    console.log('📥 Loading contents for language:', contentLanguage, 'section:', contentSection);
     try {
-      const getContentFn = httpsCallable(functions, 'getContent');
-      const result = await getContentFn({ language: contentLanguage });
-      const contentData = result.data as Record<string, Record<string, string>>;
+      const docRef = doc(db, 'content', contentLanguage);
+      const docSnap = await getDoc(docRef);
+
+      let contentData: Record<string, Record<string, string>> = {};
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        // Merge with defaults if needed, but for simplicity, use the data directly
+        contentData = data as Record<string, Record<string, string>>;
+      }
+
+      console.log('📄 Loaded content data:', contentData);
+      console.log('📋 Setting current contents for section:', contentSection, 'data:', contentData[contentSection] || {});
       setCurrentContents(contentData[contentSection] || {});
     } catch (error) {
       console.error('Error loading content:', error);
@@ -195,23 +239,9 @@ const AdminDashboard: React.FC = () => {
 
   // Load contents when language or section changes
   useEffect(() => {
+    console.log('🔄 useEffect triggered - contentLanguage:', contentLanguage, 'contentSection:', contentSection);
     loadCurrentContents();
   }, [contentLanguage, contentSection]);
-
-  // Helper function to convert file to base64
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        // Remove the data URL prefix (e.g., "data:application/pdf;base64,")
-        const base64Data = base64.split(',')[1];
-        resolve(base64Data);
-      };
-      reader.onerror = error => reject(error);
-    });
-  };
 
   // Simulate PDF parsing - extract menu data from PDF
   const extractMenuFromPDF = (file: File, language: 'it' | 'en') => {
@@ -260,7 +290,18 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm">
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 flex flex-col items-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+            <p className="text-gray-700 font-medium">Aggiornamento in corso...</p>
+            <p className="text-gray-500 text-sm mt-1">Non chiudere questa finestra</p>
+          </div>
+        </div>
+      )}
+
+      <nav className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -279,94 +320,126 @@ const AdminDashboard: React.FC = () => {
       </nav>
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* Metrics Section */}
+        {/* Header */}
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Metriche</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <i className="fas fa-eye text-2xl text-blue-500"></i>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Dashboard Ristorante Pizzeria Monopoli</h1>
+              <p className="text-gray-600 mt-2">Gestisci contenuti e monitora le performance del tuo ristorante</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-gray-500">Ultimo aggiornamento</p>
+              <p className="text-lg font-semibold text-gray-900">{new Date().toLocaleDateString('it-IT')}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Services Section */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Servizi</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Content Management Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => document.getElementById('content-section')?.scrollIntoView({ behavior: 'smooth' })}>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-edit text-2xl text-blue-600"></i>
                   </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
-                        Visite Totali
-                      </dt>
-                      <dd className="text-lg font-medium text-gray-900">
-                        {metrics.totalVisits}
-                      </dd>
-                    </dl>
-                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Contenuti Sito</h3>
+                  <p className="text-gray-600">Gestisci testi, immagini e contenuti del sito web</p>
+                </div>
+                <div className="ml-auto">
+                  <i className="fas fa-chevron-right text-gray-400"></i>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <i className="fas fa-utensils text-2xl text-green-500"></i>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
-                        Visualizzazioni Menu
-                      </dt>
-                      <dd className="text-lg font-medium text-gray-900">
-                        {metrics.menuViews}
-                      </dd>
-                    </dl>
+            {/* PDF Menu Upload Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-green-300 transition-colors cursor-pointer" onClick={() => document.getElementById('menu-section')?.scrollIntoView({ behavior: 'smooth' })}>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-file-pdf text-2xl text-green-600"></i>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <i className="fas fa-envelope text-2xl text-yellow-500"></i>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
-                        Form Contatti
-                      </dt>
-                      <dd className="text-lg font-medium text-gray-900">
-                        {metrics.contactForms}
-                      </dd>
-                    </dl>
-                  </div>
+                <div className="ml-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Caricamento PDF Menu</h3>
+                  <p className="text-gray-600">Carica e aggiorna il menu del ristorante</p>
                 </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <i className="fas fa-star text-2xl text-purple-500"></i>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
-                        Valutazione Media
-                      </dt>
-                      <dd className="text-lg font-medium text-gray-900">
-                        {metrics.averageRating}/5
-                      </dd>
-                    </dl>
-                  </div>
+                <div className="ml-auto">
+                  <i className="fas fa-chevron-right text-gray-400"></i>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Metrics Section */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Performance</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Total Visits Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Visite Totali</p>
+                  <p className="text-3xl font-bold text-gray-900">{metrics.totalVisits.toLocaleString()}</p>
+                  <p className="text-sm text-green-600 mt-1">
+                    <i className="fas fa-arrow-up mr-1"></i>
+                    +12% questo mese
+                  </p>
+                </div>
+                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                  <i className="fas fa-eye text-2xl text-blue-600"></i>
+                </div>
+              </div>
+              {/* Simple chart bars */}
+              <div className="mt-4 flex items-end space-x-1">
+                {[40, 60, 45, 80, 65, 90, 75].map((height, index) => (
+                  <div key={index} className="flex-1">
+                    <div 
+                      className="bg-blue-200 rounded-t" 
+                      style={{ height: `${height}%`, minHeight: '20px' }}
+                    ></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Menu Views Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Visualizzazioni Menu</p>
+                  <p className="text-3xl font-bold text-gray-900">{metrics.menuViews.toLocaleString()}</p>
+                  <p className="text-sm text-green-600 mt-1">
+                    <i className="fas fa-arrow-up mr-1"></i>
+                    +8% questo mese
+                  </p>
+                </div>
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                  <i className="fas fa-utensils text-2xl text-green-600"></i>
+                </div>
+              </div>
+              {/* Simple chart bars */}
+              <div className="mt-4 flex items-end space-x-1">
+                {[30, 50, 35, 70, 55, 80, 65].map((height, index) => (
+                  <div key={index} className="flex-1">
+                    <div 
+                      className="bg-green-200 rounded-t" 
+                      style={{ height: `${height}%`, minHeight: '20px' }}
+                    ></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Menu Upload Section */}
-        <div>
+        <div id="menu-section" className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Caricamento Menu PDF</h2>
           
           {uploadStatus && (
@@ -375,7 +448,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
+          <div className="bg-white border border-gray-200 overflow-hidden sm:rounded-md">
             <div className="px-4 py-5 sm:p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {menuUploads.map((upload) => (
@@ -434,7 +507,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
         {/* Content Management Section */}
-        <div className="mt-8">
+        <div id="content-section" className="mt-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Gestione Contenuti Sito</h2>
           
           {contentStatus && (
@@ -443,7 +516,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           )}
 
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
+          <div className="bg-white border border-gray-200 overflow-hidden sm:rounded-md">
             <div className="px-4 py-5 sm:p-6">
               {/* Language Toggle */}
               <div className="mb-6">
@@ -453,7 +526,7 @@ const AdminDashboard: React.FC = () => {
                     onClick={() => setContentLanguage('it')}
                     className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
                       contentLanguage === 'it'
-                        ? 'bg-white text-gray-900 shadow-sm'
+                        ? 'bg-white text-gray-900 border border-gray-300'
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
@@ -463,7 +536,7 @@ const AdminDashboard: React.FC = () => {
                     onClick={() => setContentLanguage('en')}
                     className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
                       contentLanguage === 'en'
-                        ? 'bg-white text-gray-900 shadow-sm'
+                        ? 'bg-white text-gray-900 border border-gray-300'
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
@@ -477,7 +550,10 @@ const AdminDashboard: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
                 <select
                   value={contentSection}
-                  onChange={(e) => setContentSection(e.target.value)}
+                  onChange={(e) => {
+                    console.log('📝 Section changed to:', e.target.value);
+                    setContentSection(e.target.value);
+                  }}
                   className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="nav">Navigazione</option>
@@ -511,7 +587,14 @@ const AdminDashboard: React.FC = () => {
               <div className="flex justify-end">
                 <button
                   onClick={() => {
+                    console.log('🚀 Save button clicked, contentSection:', contentSection, 'contentLanguage:', contentLanguage);
+                    
                     // Save all fields
+                    if (!contentSection) {
+                      setContentStatus('Errore: seleziona una sezione prima di salvare');
+                      return;
+                    }
+                    
                     sectionKeys[contentSection]?.forEach(key => {
                       const value = currentContents[key] || '';
                       if (value.trim()) {

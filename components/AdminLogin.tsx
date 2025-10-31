@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { analyticsService } from '../src/analytics';
@@ -8,8 +8,27 @@ const AdminLogin: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/admin/dashboard');
+    }
+  }, [isAuthenticated, navigate]);
+
+  // Show loading while checking authentication
+  if (isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-700">Reindirizzamento al dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,11 +54,16 @@ const AdminLogin: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
+          <div className="text-center mb-8">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-4 text-blue-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L2 9l10 14L22 9z"/></svg>
+            <h1 className="text-2xl font-bold text-gray-900">Ristorante Pizzeria Monopoli</h1>
+            <p className="text-gray-600 mt-2">Pannello di Amministrazione</p>
+          </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
             Accedi al Pannello Admin
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Inserisci le tue credenziali per accedere
+            Gestisci contenuti e menu del <strong>Ristorante Pizzeria Monopoli</strong>
           </p>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>

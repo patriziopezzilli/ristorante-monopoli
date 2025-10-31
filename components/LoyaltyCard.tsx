@@ -27,7 +27,7 @@ const LoyaltyCard: React.FC = () => {
           key={i}
           className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold ${
             i < stamps
-              ? 'bg-blue-500 border-blue-500 text-white'
+              ? 'bg-black border-black text-white'
               : 'border-gray-300 text-gray-300'
           }`}
         >

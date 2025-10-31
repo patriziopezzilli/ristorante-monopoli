@@ -38,11 +38,7 @@ const Header: React.FC = () => {
   return (
     <header className={`fixed top-0 left-0 right-0 z-30 transition-all duration-300 ${isScrolled ? 'bg-white shadow-md text-gray-800' : 'bg-transparent text-white'}`}>
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center py-4">
-          <a href="#home" onClick={(e) => handleScrollTo(e, '#home')} className="flex items-center gap-3 text-xl font-bold tracking-wider">
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L2 9l10 14L22 9z"/></svg>
-            <span className={`whitespace-nowrap transition-all duration-300 overflow-hidden hidden md:inline ${isScrolled ? 'max-w-0 ml-0' : 'max-w-md ml-3'}`}>{t('hero.title')}</span>
-          </a>
+        <div className="flex justify-end md:justify-between items-center py-4">
           
           <nav className="hidden md:flex items-center space-x-6">
             {navLinks.map(link => (
@@ -68,7 +64,7 @@ const Header: React.FC = () => {
         </div>
       </div>
 
-      <div className={`md:hidden absolute top-full left-0 right-0 overflow-hidden transition-max-height duration-500 ease-in-out ${isScrolled ? 'bg-white' : 'bg-gray-900 bg-opacity-95'} ${isMenuOpen ? 'max-h-96' : 'max-h-0'}`}>
+      <div className={`md:hidden absolute top-full left-0 right-0 overflow-hidden transition-max-height duration-500 ease-in-out ${isScrolled ? 'bg-white' : 'bg-black bg-opacity-95'} ${isMenuOpen ? 'max-h-96' : 'max-h-0'}`}>
           <nav className="flex flex-col items-center space-y-2 py-4">
             {navLinks.map(link => (
               <a 
