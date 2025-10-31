@@ -1,6 +1,12 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const pdfParse = require('pdf-parse');
+// Aggiungiamo le dipendenze per i wallet
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
+
 admin.initializeApp();
 
 // Real PDF parsing function using pdf-parse
@@ -846,3 +852,216 @@ exports.updateContent = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', 'Error updating content');
   }
 });
+
+// =============================================================================
+// WALLET CARDS API FUNCTIONS
+// =============================================================================
+
+// Generate unique card ID
+exports.generateCardId = functions.https.onCall(async (data, context) => {
+  // Check if user is authenticated
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    const cardId = `WC${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    return { cardId, success: true };
+  } catch (error) {
+    console.error('Error generating card ID:', error);
+    throw new functions.https.HttpsError('internal', 'Error generating card ID');
+  }
+});
+
+// ==========================================
+// WALLET PASS GENERATION FUNCTIONS
+// ==========================================
+
+// Generate Google Wallet Pass
+exports.generateGoogleWalletPass = functions.https.onCall(async (data, context) => {
+  // Check authentication
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    // Generate new card ID
+    const cardId = crypto.randomUUID();
+
+    // Create new wallet card with zero balance
+    const newCardData = {
+      id: cardId,
+      name: '',
+      email: '',
+      balance: 0,
+      fidelityPoints: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      transactions: [],
+      isDigital: true,
+      walletType: 'google'
+    };
+
+    // Save to Firestore
+    await admin.firestore().collection('walletCards').doc(cardId).set(newCardData);
+
+    // Google Wallet Pass Object
+    const passObject = {
+      id: `338800000002${cardId.slice(-6)}`,
+      classId: '3388000000020000000', // Your issuer ID
+      passType: 'loyalty',
+      state: 'active',
+      barcode: {
+        type: 'QR_CODE',
+        value: cardId,
+        alternateText: `Carta Fedeltà ${cardId.slice(-6)}`
+      },
+      loyaltyPoints: {
+        label: 'Punti Fedeltà',
+        points: 0
+      },
+      textModulesData: [
+        {
+          header: 'Saldo',
+          body: '€0.00'
+        },
+        {
+          header: 'ID Carta',
+          body: cardId.slice(-6)
+        }
+      ],
+      linksModuleData: {
+        uris: [
+          {
+            uri: 'https://ristorante-monopoli-c82e1.web.app',
+            description: 'Visita il sito'
+          }
+        ]
+      }
+    };
+
+    // Create JWT token for Google Wallet
+    const jwtPayload = {
+      iss: functions.config().googlewallet?.service_account_email || 'your-service-account@project.iam.gserviceaccount.com',
+      aud: 'google',
+      typ: 'savetowallet',
+      iat: Math.floor(Date.now() / 1000),
+      payload: {
+        loyaltyObjects: [passObject]
+      }
+    };
+
+    // Sign with service account private key
+    const privateKey = functions.config().googlewallet?.private_key || 'your-private-key';
+    const token = jwt.sign(jwtPayload, privateKey, { algorithm: 'RS256' });
+
+    console.log(`New Google Wallet pass generated and saved: ${cardId}`);
+
+    return {
+      success: true,
+      cardId: cardId,
+      googleWalletUrl: `https://pay.google.com/gp/v/save/${token}`,
+      passObject: passObject
+    };
+
+  } catch (error) {
+    console.error('Error generating Google Wallet pass:', error);
+    throw new functions.https.HttpsError('internal', 'Error generating Google Wallet pass');
+  }
+});
+
+// Generate Apple Wallet Pass
+exports.generateAppleWalletPass = functions.https.onCall(async (data, context) => {
+  // Check authentication
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    // Generate new card ID
+    const cardId = crypto.randomUUID();
+
+    // Create new wallet card with zero balance
+    const newCardData = {
+      id: cardId,
+      name: '',
+      email: '',
+      balance: 0,
+      fidelityPoints: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      transactions: [],
+      isDigital: true,
+      walletType: 'apple'
+    };
+
+    // Save to Firestore
+    await admin.firestore().collection('walletCards').doc(cardId).set(newCardData);
+
+    // Apple Pass JSON structure
+    const passJson = {
+      formatVersion: 1,
+      passTypeIdentifier: 'pass.com.ristorantemonopoli.fidelity', // Your pass type ID
+      serialNumber: cardId,
+      teamIdentifier: functions.config().applewallet?.team_id || 'YOUR_TEAM_ID',
+      organizationName: 'Ristorante Pizzeria Monopoli',
+      description: 'Carta Fedeltà Digitale',
+      foregroundColor: 'rgb(255, 255, 255)',
+      backgroundColor: 'rgb(255, 102, 0)',
+      labelColor: 'rgb(255, 255, 255)',
+      logoText: 'Monopoli',
+      barcode: {
+        format: 'PKBarcodeFormatQR',
+        message: cardId,
+        messageEncoding: 'iso-8859-1',
+        altText: `Carta Fedeltà ${cardId.slice(-6)}`
+      },
+      storeCard: {
+        primaryFields: [
+          {
+            key: 'balance',
+            label: 'Saldo',
+            value: 0,
+            currencyCode: 'EUR'
+          }
+        ],
+        secondaryFields: [
+          {
+            key: 'points',
+            label: 'Punti Fedeltà',
+            value: 0
+          }
+        ],
+        auxiliaryFields: [
+          {
+            key: 'cardId',
+            label: 'ID Carta',
+            value: cardId.slice(-6)
+          }
+        ]
+      }
+    };
+
+    // In a real implementation, you would:
+    // 1. Create the pass.json file
+    // 2. Add signature with your Apple certificate
+    // 3. Create manifest.json
+    // 4. Zip everything into a .pkpass file
+    // 5. Return the download URL
+
+    // For now, return the pass data (would need proper signing in production)
+    console.log(`New Apple Wallet pass generated and saved: ${cardId}`);
+
+    return {
+      success: true,
+      cardId: cardId,
+      passData: passJson,
+      message: 'Pass data prepared. In production, this would be signed and packaged as .pkpass file.'
+    };
+
+  } catch (error) {
+    console.error('Error generating Apple Wallet pass:', error);
+    throw new functions.https.HttpsError('internal', 'Error generating Apple Wallet pass');
+  }
+});
+

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { db } from '../src/firebase';
-import { collection, addDoc, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, getDoc, updateDoc, getDocs } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../src/firebase';
 import { contentCache } from '../src/contentCache';
 import { analyticsService } from '../src/analytics';
 
@@ -32,6 +34,23 @@ const AdminDashboard: React.FC = () => {
   const [showContentModal, setShowContentModal] = useState(false);
   const [showMenuModal, setShowMenuModal] = useState(false);
   const [showMetricsModal, setShowMetricsModal] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+
+  // Wallet card states
+  const [walletCards, setWalletCards] = useState<any[]>([]);
+  const [selectedCard, setSelectedCard] = useState<any>(null);
+  const [showCardDetail, setShowCardDetail] = useState(false);
+  const [posMode, setPosMode] = useState(false); // true = POS mode, false = normal detail mode
+  const [quickAmount, setQuickAmount] = useState('');
+  const [quickPoints, setQuickPoints] = useState('');
+  const [scanMode, setScanMode] = useState(false);
+  const [scannedCardId, setScannedCardId] = useState('');
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [sliderPosition, setSliderPosition] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<{cardId: string, field: 'balance' | 'fidelityPoints', value: number, operation: string} | null>(null);
+  const [isUpdatingCard, setIsUpdatingCard] = useState(false);
+  const [showWalletSuccessAnimation, setShowWalletSuccessAnimation] = useState(false);
 
   const sectionKeys: Record<string, string[]> = {
     nav: ['home', 'about', 'menu', 'gallery', 'contact'],
@@ -266,6 +285,308 @@ const AdminDashboard: React.FC = () => {
     }
   }, [showContentModal, contentLanguage, contentSection]);
 
+  // Load wallet cards when wallet modal opens
+  useEffect(() => {
+    if (showWalletModal) {
+      loadWalletCards();
+    }
+  }, [showWalletModal]);
+
+  // Sync selectedCard when walletCards changes
+  useEffect(() => {
+    if (selectedCard && walletCards.length > 0) {
+      const updatedCard = walletCards.find(card => card.id === selectedCard.id);
+      if (updatedCard && (updatedCard.balance !== selectedCard.balance || updatedCard.fidelityPoints !== selectedCard.fidelityPoints)) {
+        setSelectedCard(updatedCard);
+      }
+    }
+  }, [walletCards, selectedCard]);
+
+  // Load wallet cards from Firestore directly
+  const loadWalletCards = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'walletCards'));
+      const cards = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+          lastUpdated: data.lastUpdated?.toDate ? data.lastUpdated.toDate() : new Date(data.lastUpdated),
+          transactions: data.transactions?.map((tx: any) => ({
+            ...tx,
+            timestamp: tx.timestamp?.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp)
+          })) || []
+        };
+      });
+
+      setWalletCards(cards);
+      console.log(`Loaded ${cards.length} wallet cards`);
+    } catch (error) {
+      console.error('Error loading wallet cards:', error);
+      setWalletCards([]);
+    }
+  };
+
+  // Create new wallet card directly in Firestore
+  const createWalletCard = async () => {
+    try {
+      const cardId = crypto.randomUUID();
+      const newCardData = {
+        id: cardId,
+        name: '',
+        email: '',
+        balance: 0,
+        fidelityPoints: 0,
+        createdAt: new Date(),
+        lastUpdated: new Date(),
+        transactions: []
+      };
+
+      await setDoc(doc(db, 'walletCards', cardId), newCardData);
+
+      setWalletCards(prev => [newCardData, ...prev]);
+
+      alert(`Carta creata con successo!\nID: ${cardId}\n\nQuesto ID corrisponde al QR code della carta.`);
+    } catch (error) {
+      console.error('Error creating wallet card:', error);
+      alert('Errore nella creazione della carta');
+    }
+  };
+
+  // Update card balance or points using direct Firestore operations
+  const updateCard = async (cardId: string, field: 'balance' | 'fidelityPoints', value: number, operation: string) => {
+    try {
+      const cardRef = doc(db, 'walletCards', cardId);
+      const cardDoc = await getDoc(cardRef);
+
+      if (!cardDoc.exists()) {
+        throw new Error('Carta non trovata');
+      }
+
+      const currentData = cardDoc.data();
+      const currentValue = currentData[field] || 0;
+
+      // Check for insufficient balance/points
+      if (operation === 'subtract' && currentValue < value) {
+        const fieldName = field === 'balance' ? 'saldo' : 'punti fedeltà';
+        throw new Error(`Saldo ${fieldName} insufficiente. Disponibile: ${field === 'balance' ? '€' : ''}${currentValue}${field === 'fidelityPoints' ? ' punti' : ''}`);
+      }
+
+      const newValue = operation === 'add' ? currentValue + value : currentValue - value;
+
+      // Create transaction record
+      const transaction = {
+        type: operation === 'add' ? `Aggiunta ${field === 'balance' ? 'saldo' : 'punti'}` : `Rimozione ${field === 'balance' ? 'saldo' : 'punti'}`,
+        amount: operation === 'add' ? value : -value,
+        timestamp: new Date(),
+        field: field
+      };
+
+      const updateData = {
+        [field]: newValue,
+        lastUpdated: new Date(),
+        transactions: [...(currentData.transactions || []), transaction]
+      };
+
+      await updateDoc(cardRef, updateData);
+
+      const updatedCard = {
+        ...currentData,
+        ...updateData,
+        id: cardId,
+        createdAt: currentData.createdAt?.toDate ? currentData.createdAt.toDate() : new Date(currentData.createdAt),
+        lastUpdated: new Date(),
+        transactions: [...(currentData.transactions || []), transaction]
+      };
+
+      setWalletCards(prev => prev.map(c =>
+        c.id === cardId ? updatedCard : c
+      ));
+
+      console.log(`Card ${cardId} updated: ${field} = ${newValue}`);
+    } catch (error: any) {
+      console.error('Error updating card:', error);
+      if (error.message?.includes('insufficiente') || error.message?.includes('Insufficient')) {
+        alert(error.message);
+      } else {
+        alert('Errore nell\'aggiornamento della carta');
+      }
+      throw error; // Re-throw to be handled by confirmCardUpdate
+    }
+  };
+
+  // Handle card update with confirmation
+  const handleCardUpdate = (cardId: string, field: 'balance' | 'fidelityPoints', value: number, operation: string) => {
+    setPendingUpdate({ cardId, field, value, operation });
+    setShowConfirmDialog(true);
+    setSliderPosition(0); // Reset slider
+  };
+
+  // Handle slider drag
+  const handleSliderMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+  };
+
+  const handleSliderMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+
+    const sliderContainer = e.currentTarget.parentElement;
+    if (!sliderContainer) return;
+
+    const rect = sliderContainer.getBoundingClientRect();
+    const newPosition = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    setSliderPosition(newPosition);
+
+    // If slider reaches 90% or more, confirm the operation
+    if (newPosition >= 90) {
+      confirmCardUpdate();
+    }
+  };
+
+  const handleSliderMouseUp = () => {
+    setIsDragging(false);
+    // If not completed, reset slider
+    if (sliderPosition < 90) {
+      setSliderPosition(0);
+    }
+  };
+
+  // Add global mouse event listeners for better drag experience
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+
+      const sliderContainer = document.querySelector('.slider-container');
+      if (!sliderContainer) return;
+
+      const rect = sliderContainer.getBoundingClientRect();
+      const newPosition = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      setSliderPosition(newPosition);
+
+      // If slider reaches 90% or more, confirm the operation
+      if (newPosition >= 90) {
+        confirmCardUpdate();
+      }
+    };
+
+    const handleGlobalMouseUp = () => {
+      setIsDragging(false);
+      // If not completed, reset slider
+      if (sliderPosition < 90) {
+        setSliderPosition(0);
+      }
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [isDragging, sliderPosition]);
+
+  // Confirm card update
+  const confirmCardUpdate = async () => {
+    if (pendingUpdate) {
+      setIsUpdatingCard(true);
+      setShowConfirmDialog(false);
+
+      try {
+        await updateCard(pendingUpdate.cardId, pendingUpdate.field, pendingUpdate.value, pendingUpdate.operation);
+
+        // Reload wallet cards to get updated data including new transactions
+        await loadWalletCards();
+
+        // Force update selectedCard after a longer delay to ensure walletCards is updated
+        setTimeout(() => {
+          const updatedCard = walletCards.find(c => c.id === pendingUpdate.cardId);
+          if (updatedCard) {
+            setSelectedCard({ ...updatedCard }); // Force re-render with spread
+          }
+          setIsUpdatingCard(false);
+          setShowWalletSuccessAnimation(true);
+          
+          // Hide success animation after 2.5 seconds
+          setTimeout(() => {
+            setShowWalletSuccessAnimation(false);
+          }, 2500);
+        }, 500);
+      } catch (error) {
+        console.error('Error updating card:', error);
+        setIsUpdatingCard(false);
+        setSliderPosition(0);
+        alert('Errore nell\'aggiornamento della carta');
+        return;
+      }
+
+      // Clear input fields after successful operation
+      if (pendingUpdate.field === 'balance') {
+        const balanceInput = document.getElementById('balance-amount') as HTMLInputElement;
+        if (balanceInput) balanceInput.value = '';
+      } else if (pendingUpdate.field === 'fidelityPoints') {
+        const pointsInput = document.getElementById('points-amount') as HTMLInputElement;
+        if (pointsInput) pointsInput.value = '';
+      }
+
+      setPendingUpdate(null);
+      setSliderPosition(0);
+    }
+  };
+
+  // Scan QR code (simulated)
+  const scanQRCode = () => {
+    setScanMode(true);
+    // In a real implementation, this would open the camera
+    setTimeout(() => {
+      const mockCardId = prompt('Simulazione scanner QR - Inserisci ID carta (o lascia vuoto per test):');
+      if (mockCardId) {
+        setScannedCardId(mockCardId);
+        findCardById(mockCardId);
+      }
+      setScanMode(false);
+    }, 1000);
+  };
+
+  // Find card by ID (used for scanning)
+  const findCardById = (cardId: string) => {
+    const card = walletCards.find(c => c.id === cardId);
+    if (card) {
+      setSelectedCard(card);
+      setPosMode(true); // Always open POS mode when scanning
+    } else {
+      alert('Carta non trovata. Verifica l\'ID e riprova.');
+    }
+  };
+
+  // POS Mode functions
+  const addBalance = async (amount: number) => {
+    if (!selectedCard) return;
+    handleCardUpdate(selectedCard.id, 'balance', amount, 'add');
+    setQuickAmount('');
+  };
+
+  const removeBalance = async (amount: number) => {
+    if (!selectedCard) return;
+    handleCardUpdate(selectedCard.id, 'balance', amount, 'subtract');
+    setQuickAmount('');
+  };
+
+  const addPoints = async (points: number) => {
+    if (!selectedCard) return;
+    handleCardUpdate(selectedCard.id, 'fidelityPoints', points, 'add');
+    setQuickPoints('');
+  };
+
+  const removePoints = async (points: number) => {
+    if (!selectedCard) return;
+    handleCardUpdate(selectedCard.id, 'fidelityPoints', points, 'subtract');
+    setQuickPoints('');
+  };
+
   // Simulate PDF parsing - extract menu data from PDF
   const extractMenuFromPDF = (file: File, language: 'it' | 'en') => {
     // In a real implementation, this would use a PDF parsing library
@@ -315,90 +636,109 @@ const AdminDashboard: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+          <div className="flex justify-between h-14 md:h-16">
             <div className="flex items-center">
-              <h1 className="text-xl font-semibold text-gray-900">Admin Dashboard</h1>
+              <h1 className="text-lg md:text-xl font-semibold text-gray-900">Admin Dashboard</h1>
             </div>
             <div className="flex items-center">
               <button
                 onClick={handleLogout}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 md:px-4 md:py-2 rounded-md text-sm font-medium transition-colors"
               >
-                Logout
+                <span className="hidden sm:inline">Logout</span>
+                <i className="fas fa-sign-out-alt sm:hidden"></i>
               </button>
             </div>
           </div>
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto py-4 px-4 sm:py-6 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
+        <div className="mb-6 md:mb-8">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-4 sm:space-y-0">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Dashboard Ristorante Pizzeria Monopoli</h1>
-              <p className="text-gray-600 mt-2">Gestisci contenuti e monitora le performance del tuo ristorante</p>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard Ristorante Pizzeria Monopoli</h1>
+              <p className="text-gray-600 mt-1 md:mt-2 text-sm md:text-base">Gestisci contenuti e monitora le performance del tuo ristorante</p>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-gray-500">Ultimo aggiornamento</p>
-              <p className="text-lg font-semibold text-gray-900">{new Date().toLocaleDateString('it-IT')}</p>
+            <div className="text-left sm:text-right">
+              <p className="text-xs md:text-sm text-gray-500">Ultimo aggiornamento</p>
+              <p className="text-base md:text-lg font-semibold text-gray-900">{new Date().toLocaleDateString('it-IT')}</p>
             </div>
           </div>
         </div>
 
         {/* Services Section */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Servizi</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mb-6 md:mb-8">
+          <h2 className="text-xl md:text-2xl font-bold text-gray-900 mb-4 md:mb-6">Servizi</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             {/* Content Management Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => setShowContentModal(true)}>
+            <div className="bg-white border border-gray-200 rounded-lg p-4 md:p-6 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => setShowContentModal(true)}>
               <div className="flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <i className="fas fa-edit text-2xl text-blue-600"></i>
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-edit text-xl md:text-2xl text-blue-600"></i>
                   </div>
                 </div>
-                <div className="ml-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Contenuti Sito</h3>
-                  <p className="text-gray-600">Gestisci testi, immagini e contenuti del sito web</p>
+                <div className="ml-3 md:ml-4 flex-1 min-w-0">
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 truncate">Contenuti Sito</h3>
+                  <p className="text-gray-600 text-sm">Gestisci testi, immagini e contenuti del sito web</p>
                 </div>
-                <div className="ml-auto">
+                <div className="ml-2 md:ml-auto flex-shrink-0">
                   <i className="fas fa-external-link-alt text-gray-400"></i>
                 </div>
               </div>
             </div>
 
             {/* PDF Menu Upload Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-green-300 transition-colors cursor-pointer" onClick={() => setShowMenuModal(true)}>
+            <div className="bg-white border border-gray-200 rounded-lg p-4 md:p-6 hover:border-green-300 transition-colors cursor-pointer" onClick={() => setShowMenuModal(true)}>
               <div className="flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                    <i className="fas fa-file-pdf text-2xl text-green-600"></i>
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-file-pdf text-xl md:text-2xl text-green-600"></i>
                   </div>
                 </div>
-                <div className="ml-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Caricamento PDF Menu</h3>
-                  <p className="text-gray-600">Carica e aggiorna il menu del ristorante</p>
+                <div className="ml-3 md:ml-4 flex-1 min-w-0">
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 truncate">Caricamento PDF Menu</h3>
+                  <p className="text-gray-600 text-sm">Carica e aggiorna il menu del ristorante</p>
                 </div>
-                <div className="ml-auto">
+                <div className="ml-2 md:ml-auto flex-shrink-0">
                   <i className="fas fa-external-link-alt text-gray-400"></i>
                 </div>
               </div>
             </div>
 
             {/* Performance Metrics Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-purple-300 transition-colors cursor-pointer" onClick={() => setShowMetricsModal(true)}>
+            <div className="bg-white border border-gray-200 rounded-lg p-4 md:p-6 hover:border-purple-300 transition-colors cursor-pointer" onClick={() => setShowMetricsModal(true)}>
               <div className="flex items-center">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                    <i className="fas fa-chart-line text-2xl text-purple-600"></i>
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-chart-line text-xl md:text-2xl text-purple-600"></i>
                   </div>
                 </div>
-                <div className="ml-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Performance</h3>
-                  <p className="text-gray-600">Monitora visite e statistiche del sito</p>
+                <div className="ml-3 md:ml-4 flex-1 min-w-0">
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 truncate">Performance</h3>
+                  <p className="text-gray-600 text-sm">Monitora visite e statistiche del sito</p>
                 </div>
-                <div className="ml-auto">
+                <div className="ml-2 md:ml-auto flex-shrink-0">
+                  <i className="fas fa-external-link-alt text-gray-400"></i>
+                </div>
+              </div>
+            </div>
+
+            {/* Wallet Cards Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-4 md:p-6 hover:border-orange-300 transition-colors cursor-pointer" onClick={() => setShowWalletModal(true)}>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-credit-card text-xl md:text-2xl text-orange-600"></i>
+                  </div>
+                </div>
+                <div className="ml-3 md:ml-4 flex-1 min-w-0">
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 truncate">Wallet Cards</h3>
+                  <p className="text-gray-600 text-sm">Gestisci carte fedeltà digitali</p>
+                </div>
+                <div className="ml-2 md:ml-auto flex-shrink-0">
                   <i className="fas fa-external-link-alt text-gray-400"></i>
                 </div>
               </div>
@@ -408,23 +748,731 @@ const AdminDashboard: React.FC = () => {
 
       </div>
 
-      {/* Content Management Modal */}
-      {showContentModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Gestione Contenuti Sito</h2>
+      {/* Wallet Cards Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-lg max-w-7xl w-full max-h-[95vh] overflow-y-auto border border-gray-200">
+            {/* Header */}
+            <div className="bg-white border-b border-gray-200 p-4 md:p-6">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-4 sm:space-y-0">
+                <div className="flex items-center">
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center mr-3 md:mr-4">
+                    <i className="fas fa-credit-card text-xl md:text-2xl text-orange-600"></i>
+                  </div>
+                  <div>
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-900">Gestione Wallet Cards</h2>
+                    <p className="text-gray-600 text-sm">Sistema digitale carte fedeltà</p>
+                  </div>
+                </div>
                 <button
-                  onClick={() => setShowContentModal(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  onClick={() => setShowWalletModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1 self-end sm:self-auto"
+                >
+                  <i className="fas fa-times text-lg md:text-xl"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-8">
+              {/* Header con azioni */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 md:mb-8 bg-white rounded-xl p-4 md:p-6 shadow-lg border border-orange-100">
+                <div className="mb-4 sm:mb-0">
+                  <h3 className="text-lg md:text-xl font-bold text-gray-900 mb-1">Carte Attive</h3>
+                  <p className="text-gray-600 text-sm">Totale carte: <span className="font-semibold text-orange-600">{walletCards.length}</span></p>
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 w-full sm:w-auto">
+                  <button
+                    onClick={scanQRCode}
+                    disabled={scanMode}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 md:px-6 py-3 rounded-lg text-sm font-semibold flex items-center justify-center transition-colors disabled:cursor-not-allowed"
+                  >
+                    {scanMode ? (
+                      <>
+                        <i className="fas fa-spinner fa-spin mr-2 md:mr-3"></i>
+                        <span className="hidden sm:inline">Scansionando...</span>
+                        <span className="sm:hidden">Scan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <i className="fas fa-qrcode mr-2 md:mr-3 text-lg"></i>
+                        <span className="hidden sm:inline">Scanner QR</span>
+                        <span className="sm:hidden">QR Scan</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={createWalletCard}
+                    className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-3 rounded-lg text-sm font-semibold flex items-center justify-center transition-colors"
+                  >
+                    <i className="fas fa-plus mr-2 md:mr-3 text-lg"></i>
+                    <span className="hidden sm:inline">Crea Carta</span>
+                    <span className="sm:hidden">Crea</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Cards Grid */}
+              <div className="mb-8">
+                {walletCards.length === 0 ? (
+                  <div className="text-center py-16 bg-white rounded-lg border border-gray-200">
+                    <div className="w-24 h-24 bg-orange-100 rounded-lg flex items-center justify-center mx-auto mb-6">
+                      <i className="fas fa-credit-card text-4xl text-orange-600"></i>
+                    </div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">Nessuna carta creata</h3>
+                    <p className="text-gray-600 mb-6 max-w-md mx-auto">Inizia creando la tua prima carta digitale con QR code. Ogni carta avrà un ID univoco per Apple Wallet e Android Wallet.</p>
+                    <button
+                      onClick={createWalletCard}
+                      className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-4 rounded-lg text-lg font-semibold transition-colors"
+                    >
+                      <i className="fas fa-plus mr-3"></i>
+                      Crea Prima Carta
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {walletCards.map((card) => (
+                      <div key={card.id} className="bg-white border border-gray-200 rounded-lg hover:border-orange-300 transition-colors overflow-hidden">
+                        {/* Card Header */}
+                        <div className="bg-orange-50 border-b border-orange-200 p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+                                <i className="fas fa-credit-card text-orange-600"></i>
+                              </div>
+                              <div>
+                                <h4 className="font-semibold text-gray-900 text-sm">Carta #{card.id.slice(-6)}</h4>
+                                <p className="text-xs text-gray-600">ID: {card.id}</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setSelectedCard(card);
+                                setShowCardDetail(true);
+                              }}
+                              className="text-orange-600 hover:text-orange-800 transition-colors p-2 hover:bg-orange-50 rounded-lg"
+                            >
+                              <i className="fas fa-eye"></i>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Card Body */}
+                        <div className="p-6">
+                          <div className="space-y-4">
+                            {/* Balance */}
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                  <i className="fas fa-euro-sign text-green-600"></i>
+                                  <span className="text-sm font-medium text-gray-700">Saldo</span>
+                                </div>
+                                <span className="font-bold text-xl text-green-600">€{card.balance.toFixed(2)}</span>
+                              </div>
+                            </div>
+
+                            {/* Fidelity Points */}
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                  <i className="fas fa-star text-blue-600"></i>
+                                  <span className="text-sm font-medium text-gray-700">Punti Fedeltà</span>
+                                </div>
+                                <span className="font-bold text-xl text-blue-600">{card.fidelityPoints}</span>
+                              </div>
+                            </div>
+
+                            {/* Last Updated */}
+                            <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 text-center">
+                              <i className="fas fa-clock mr-1"></i>
+                              Ultimo agg.: {card.lastUpdated ? card.lastUpdated.toLocaleString('it-IT') : 'Mai'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Info Section */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 md:p-6">
+                <div className="flex flex-col sm:flex-row items-start space-y-4 sm:space-y-0 sm:space-x-4">
+                  <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <i className="fas fa-info text-orange-600"></i>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-base md:text-lg font-bold text-gray-900 mb-3">💳 Sistema Wallet Cards Digitale</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 text-xs md:text-sm text-gray-600">
+                      <div className="space-y-2">
+                        <div className="flex items-center">
+                          <i className="fas fa-qrcode w-4 md:w-5 text-center mr-2 text-blue-600"></i>
+                          <span>ID univoco per QR code</span>
+                        </div>
+                        <div className="flex items-center">
+                          <i className="fas fa-mobile-alt w-4 md:w-5 text-center mr-2 text-green-600"></i>
+                          <span>Compatibile Apple/Android Wallet</span>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center">
+                          <i className="fas fa-history w-4 md:w-5 text-center mr-2 text-purple-600"></i>
+                          <span>Cronologia operazioni completa</span>
+                        </div>
+                        <div className="flex items-center">
+                          <i className="fas fa-shield-alt w-4 md:w-5 text-center mr-2 text-red-600"></i>
+                          <span>Conferma per ogni modifica</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POS Mode Modal - Mobile Optimized */}
+      {posMode && selectedCard && (
+        <div className="fixed inset-0 bg-black bg-opacity-95 backdrop-blur-sm flex items-center justify-center p-2 z-[70]">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md h-[95vh] flex flex-col border-4 border-orange-500">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 p-4 text-white relative overflow-hidden rounded-t-3xl">
+              <div className="absolute inset-0 bg-black bg-opacity-20"></div>
+              <div className="relative z-10 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+                    <i className="fas fa-mobile-alt text-xl"></i>
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">POS Mode</h2>
+                    <p className="text-orange-100 text-xs">Carta #{selectedCard.id.slice(-6)}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPosMode(false)}
+                  className="text-white hover:text-orange-200 transition-all duration-200 hover:scale-105"
                 >
                   <i className="fas fa-times text-xl"></i>
                 </button>
               </div>
             </div>
-            
-            <div className="p-6">
+
+            {/* Main Content */}
+            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+              {/* Balance & Points Display */}
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-4">
+                <div className="text-center mb-4">
+                  <div className="text-3xl font-bold text-green-600 mb-1">
+                    €{selectedCard.balance.toFixed(2)}
+                  </div>
+                  <div className="text-sm text-green-700 font-medium">Saldo Disponibile</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600 mb-1">
+                    {selectedCard.fidelityPoints}
+                  </div>
+                  <div className="text-sm text-blue-700 font-medium">Punti Fedeltà</div>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-bold text-gray-800 text-center">Operazioni Rapide</h3>
+
+                {/* Balance Operations */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Saldo (€)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={quickAmount}
+                      onChange={(e) => setQuickAmount(e.target.value)}
+                      className="w-32 px-3 py-2 text-lg border-2 border-gray-300 rounded-lg text-center font-bold"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => quickAmount && addBalance(parseFloat(quickAmount))}
+                      disabled={!quickAmount || isUpdatingCard}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-green-300 text-white font-bold py-4 px-4 rounded-xl transition-all duration-200 transform hover:scale-105 disabled:transform-none flex items-center justify-center space-x-2 text-lg"
+                    >
+                      <i className="fas fa-plus text-lg"></i>
+                      <span>Aggiungi</span>
+                    </button>
+                    <button
+                      onClick={() => quickAmount && removeBalance(parseFloat(quickAmount))}
+                      disabled={!quickAmount || isUpdatingCard}
+                      className="bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white font-bold py-4 px-4 rounded-xl transition-all duration-200 transform hover:scale-105 disabled:transform-none flex items-center justify-center space-x-2 text-lg"
+                    >
+                      <i className="fas fa-minus text-lg"></i>
+                      <span>Rimuovi</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Points Operations */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Punti</span>
+                    <input
+                      type="number"
+                      placeholder="0"
+                      value={quickPoints}
+                      onChange={(e) => setQuickPoints(e.target.value)}
+                      className="w-32 px-3 py-2 text-lg border-2 border-gray-300 rounded-lg text-center font-bold"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => quickPoints && addPoints(parseInt(quickPoints))}
+                      disabled={!quickPoints || isUpdatingCard}
+                      className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white font-bold py-4 px-4 rounded-xl transition-all duration-200 transform hover:scale-105 disabled:transform-none flex items-center justify-center space-x-2 text-lg"
+                    >
+                      <i className="fas fa-plus text-lg"></i>
+                      <span>Aggiungi</span>
+                    </button>
+                    <button
+                      onClick={() => quickPoints && removePoints(parseInt(quickPoints))}
+                      disabled={!quickPoints || isUpdatingCard}
+                      className="bg-purple-500 hover:bg-purple-600 disabled:bg-purple-300 text-white font-bold py-4 px-4 rounded-xl transition-all duration-200 transform hover:scale-105 disabled:transform-none flex items-center justify-center space-x-2 text-lg"
+                    >
+                      <i className="fas fa-minus text-lg"></i>
+                      <span>Rimuovi</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Preset Amounts - Separated by type */}
+              <div className="space-y-4">
+                {/* Balance Preset Amounts */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700 text-center flex items-center justify-center">
+                    <i className="fas fa-euro-sign mr-2 text-green-600"></i>
+                    Importi Saldo (€)
+                  </h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[5, 10, 15, 20, 25, 50].map(amount => (
+                      <button
+                        key={`balance-${amount}`}
+                        onClick={() => addBalance(amount)}
+                        disabled={isUpdatingCard}
+                        className="bg-green-100 hover:bg-green-200 disabled:bg-green-50 text-green-800 font-bold py-3 px-3 rounded-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none text-sm border-2 border-green-200"
+                      >
+                        €{amount}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Points Preset Amounts */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700 text-center flex items-center justify-center">
+                    <i className="fas fa-star mr-2 text-blue-600"></i>
+                    Importi Punti
+                  </h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[10, 25, 50, 100, 250, 500].map(points => (
+                      <button
+                        key={`points-${points}`}
+                        onClick={() => addPoints(points)}
+                        disabled={isUpdatingCard}
+                        className="bg-blue-100 hover:bg-blue-200 disabled:bg-blue-50 text-blue-800 font-bold py-3 px-3 rounded-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none text-sm border-2 border-blue-200"
+                      >
+                        {points} pts
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Transactions */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                  <i className="fas fa-history mr-2"></i>
+                  Ultime Operazioni
+                </h4>
+                <div className="space-y-1 max-h-24 overflow-y-auto">
+                  {selectedCard.transactions && selectedCard.transactions.slice(-3).reverse().map((transaction: any, index: number) => (
+                    <div key={index} className="text-xs text-gray-600 bg-white rounded p-2">
+                      <div className="flex justify-between">
+                        <span className="font-medium">{transaction.type}</span>
+                        <span className={`font-bold ${transaction.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {transaction.amount > 0 ? '+' : ''}€{transaction.amount.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="text-gray-500 mt-1">
+                        {new Date(transaction.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  ))}
+                  {(!selectedCard.transactions || selectedCard.transactions.length === 0) && (
+                    <div className="text-xs text-gray-500 text-center py-2">
+                      Nessuna operazione recente
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={() => {
+                    setPosMode(false);
+                    setShowCardDetail(true);
+                  }}
+                  className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2"
+                >
+                  <i className="fas fa-info-circle"></i>
+                  <span>Vista Dettagliata</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Card Detail Modal */}
+      {showCardDetail && selectedCard && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[95vh] overflow-y-auto border border-orange-200">
+            {/* Header */}
+            <div className="bg-orange-600 p-4 md:p-6 text-white relative overflow-hidden">
+              <div className="absolute inset-0 bg-black bg-opacity-10"></div>
+              <div className="relative z-10 flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                    <i className="fas fa-credit-card text-2xl"></i>
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">Dettaglio Carta #{selectedCard.id.slice(-6)}</h2>
+                    <p className="text-orange-100 text-sm">ID: {selectedCard.id}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCardDetail(false)}
+                  className="text-white hover:text-orange-200 transition-all duration-200 hover:scale-110"
+                >
+                  <i className="fas fa-times text-2xl"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-8">
+              {/* Card Overview */}
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 md:p-6 mb-8">
+                <div className="flex flex-col lg:flex-row items-center justify-between">
+                  <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6 mb-6 lg:mb-0">
+                    <div className="w-16 h-16 md:w-20 md:h-20 bg-orange-600 rounded-lg flex items-center justify-center">
+                      <i className="fas fa-credit-card text-2xl md:text-3xl text-white"></i>
+                    </div>
+                    <div className="text-center sm:text-left">
+                      <h3 className="text-xl md:text-2xl font-bold text-gray-900 mb-1">Carta Fedeltà Digitale</h3>
+                      <p className="text-gray-600 text-sm">ID univoco: <span className="font-mono font-semibold">{selectedCard.id}</span></p>
+                    </div>
+                  </div>
+                  <div className="flex space-x-4 md:space-x-8">
+                    <div className="text-center">
+                      <div className="text-2xl md:text-3xl font-bold text-green-600 mb-1">€{selectedCard.balance.toFixed(2)}</div>
+                      <div className="text-xs md:text-sm text-gray-600">Saldo Attuale</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl md:text-3xl font-bold text-blue-600 mb-1">{selectedCard.fidelityPoints}</div>
+                      <div className="text-xs md:text-sm text-gray-600">Punti Fedeltà</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Operations Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8 mb-8">
+                {/* Balance Operations */}
+                <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-6 shadow-lg">
+                  <div className="flex items-center space-x-3 mb-4 md:mb-6">
+                    <div className="w-8 h-8 md:w-10 md:h-10 bg-green-100 rounded-full flex items-center justify-center">
+                      <i className="fas fa-euro-sign text-green-600"></i>
+                    </div>
+                    <h4 className="text-lg md:text-xl font-bold text-gray-900">Gestione Saldo</h4>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-3">
+                      <input
+                        type="number"
+                        placeholder="Importo"
+                        className="flex-1 border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all"
+                        id="balance-amount"
+                        step="0.01"
+                        min="0"
+                        disabled={isUpdatingCard}
+                      />
+                      <span className="text-gray-600 font-medium">€</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                      <button
+                        onClick={() => {
+                          const amount = parseFloat((document.getElementById('balance-amount') as HTMLInputElement).value) || 0;
+                          if (amount > 0) {
+                            handleCardUpdate(selectedCard.id, 'balance', amount, 'add');
+                          } else if (amount === 0) {
+                            alert('Inserisci un importo valido');
+                          }
+                        }}
+                        disabled={isUpdatingCard}
+                        className={`flex-1 ${isUpdatingCard ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center`}
+                      >
+                        <i className="fas fa-plus mr-2"></i>
+                        Aggiungi €
+                      </button>
+                      <button
+                        onClick={() => {
+                          const amount = parseFloat((document.getElementById('balance-amount') as HTMLInputElement).value) || 0;
+                          if (amount > 0) {
+                            if (selectedCard.balance >= amount) {
+                              handleCardUpdate(selectedCard.id, 'balance', amount, 'subtract');
+                            } else {
+                              alert(`Saldo insufficiente. Saldo attuale: €${selectedCard.balance.toFixed(2)}`);
+                            }
+                          } else if (amount === 0) {
+                            alert('Inserisci un importo valido');
+                          }
+                        }}
+                        disabled={isUpdatingCard}
+                        className={`flex-1 ${isUpdatingCard ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center`}
+                      >
+                        <i className="fas fa-minus mr-2"></i>
+                        Rimuovi €
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Points Operations */}
+                <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-6 shadow-lg">
+                  <div className="flex items-center space-x-3 mb-4 md:mb-6">
+                    <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                      <i className="fas fa-star text-blue-600"></i>
+                    </div>
+                    <h4 className="text-lg md:text-xl font-bold text-gray-900">Gestione Punti</h4>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-3">
+                      <input
+                        type="number"
+                        placeholder="Punti"
+                        className="flex-1 border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                        id="points-amount"
+                        min="0"
+                        disabled={isUpdatingCard}
+                      />
+                      <span className="text-gray-600 font-medium">pts</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                      <button
+                        onClick={() => {
+                          const points = parseInt((document.getElementById('points-amount') as HTMLInputElement).value) || 0;
+                          if (points > 0) {
+                            handleCardUpdate(selectedCard.id, 'fidelityPoints', points, 'add');
+                          } else if (points === 0) {
+                            alert('Inserisci un numero di punti valido');
+                          }
+                        }}
+                        disabled={isUpdatingCard}
+                        className={`flex-1 ${isUpdatingCard ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center`}
+                      >
+                        <i className="fas fa-plus mr-2"></i>
+                        Aggiungi Punti
+                      </button>
+                      <button
+                        onClick={() => {
+                          const points = parseInt((document.getElementById('points-amount') as HTMLInputElement).value) || 0;
+                          if (points > 0) {
+                            if (selectedCard.fidelityPoints >= points) {
+                              handleCardUpdate(selectedCard.id, 'fidelityPoints', points, 'subtract');
+                            } else {
+                              alert(`Punti insufficienti. Punti attuali: ${selectedCard.fidelityPoints}`);
+                            }
+                          } else if (points === 0) {
+                            alert('Inserisci un numero di punti valido');
+                          }
+                        }}
+                        disabled={isUpdatingCard}
+                        className={`flex-1 ${isUpdatingCard ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center`}
+                      >
+                        <i className="fas fa-minus mr-2"></i>
+                        Rimuovi Punti
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Transaction History */}
+              <div className="bg-white border border-gray-200 rounded-xl p-4 md:p-6 shadow-lg">
+                <div className="flex items-center space-x-3 mb-4 md:mb-6">
+                  <div className="w-8 h-8 md:w-10 md:h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                    <i className="fas fa-history text-purple-600"></i>
+                  </div>
+                  <h4 className="text-lg md:text-xl font-bold text-gray-900">Cronologia Operazioni</h4>
+                </div>
+
+                {selectedCard.transactions && selectedCard.transactions.length > 0 ? (
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {selectedCard.transactions.slice().reverse().map((transaction: any) => (
+                      <div key={transaction.id} className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
+                        <div className="flex items-center space-x-4">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                            transaction.type === 'creation' ? 'bg-green-100 text-green-600' :
+                            transaction.type === 'balance_update' ? 'bg-blue-100 text-blue-600' :
+                            'bg-purple-100 text-purple-600'
+                          }`}>
+                            <i className={`fas fa-${
+                              transaction.type === 'creation' ? 'plus' :
+                              transaction.type === 'balance_update' ? 'euro-sign' :
+                              'star'
+                            }`}></i>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-900 text-sm">{transaction.description}</p>
+                            <p className="text-xs text-gray-600">
+                              <i className="fas fa-clock mr-1"></i>
+                              {transaction.timestamp.toLocaleString('it-IT')}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {transaction.field === 'balance' && (
+                            <span className={`font-bold text-sm ${
+                              transaction.amount >= 0 ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              {transaction.amount >= 0 ? '+' : ''}€{transaction.amount.toFixed(2)}
+                            </span>
+                          )}
+                          {transaction.field === 'fidelityPoints' && (
+                            <span className={`font-bold text-sm ${
+                              transaction.amount >= 0 ? 'text-blue-600' : 'text-red-600'
+                            }`}>
+                              {transaction.amount >= 0 ? '+' : ''}{transaction.amount} pts
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <i className="fas fa-inbox text-3xl mb-3 text-gray-300"></i>
+                    <p>Nessuna operazione registrata</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Wallet Update Loading Overlay */}
+      {isUpdatingCard && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[80]">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 text-center shadow-2xl">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+            <h3 className="text-lg font-semibold text-gray-900">Aggiornamento Carta...</h3>
+            <p className="text-gray-600 mt-2">Stiamo aggiornando il saldo e salvando l'operazione.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Wallet Success Animation Overlay */}
+      {showWalletSuccessAnimation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[85]">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 text-center shadow-2xl animate-bounce-in">
+            <div className="success-checkmark mb-6">
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <i className="fas fa-check text-3xl text-green-600"></i>
+              </div>
+            </div>
+            <h3 className="text-xl font-bold text-green-600 mb-2 animate-fade-in">Operazione Completata!</h3>
+            <p className="text-gray-600 animate-fade-in animation-delay-100">La carta è stata aggiornata con successo.</p>
+            <div className="mt-6 flex justify-center animate-fade-in animation-delay-150">
+              <div className="w-32 h-2 bg-green-100 rounded-full overflow-hidden">
+                <div className="h-full bg-green-500 rounded-full animate-progress"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog with Slider */}
+      {showConfirmDialog && pendingUpdate && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center p-4 z-[70]">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-orange-200">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-orange-600 rounded-lg flex items-center justify-center mx-auto mb-6">
+                <i className="fas fa-shield-alt text-2xl text-white"></i>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-3">Conferma Operazione</h3>
+              <p className="text-gray-700 mb-8 text-lg">
+                Trascina lo slider fino alla fine per confermare
+              </p>
+
+              {/* Slider */}
+              <div className="relative mb-6 slider-container">
+                <div className="w-full h-12 bg-gray-200 rounded-full relative overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-orange-500 to-red-500 rounded-full transition-all duration-200 ease-out"
+                    style={{ width: `${sliderPosition}%` }}
+                  ></div>
+                  <div
+                    className="absolute top-0 h-full w-12 bg-white border-2 border-orange-500 rounded-full shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center transform transition-transform duration-200"
+                    style={{ left: `calc(${sliderPosition}% - 24px)` }}
+                    onMouseDown={handleSliderMouseDown}
+                  >
+                    <i className="fas fa-arrow-right text-orange-600"></i>
+                  </div>
+                </div>
+                <div className="flex justify-between text-xs text-gray-500 mt-2">
+                  <span>Annulla</span>
+                  <span>Conferma</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowConfirmDialog(false);
+                  setPendingUpdate(null);
+                  setSliderPosition(0);
+                  setIsDragging(false);
+                }}
+                className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-3 px-6 rounded-lg transition-all duration-200"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Content Management Modal */}
+      {showContentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-4 md:p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900">Gestione Contenuti Sito</h2>
+                <button
+                  onClick={() => setShowContentModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                >
+                  <i className="fas fa-times text-lg md:text-xl"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-6">
               {/* Error Status */}
               {contentStatus && !showSuccessAnimation && (
                 <div className="mb-4 p-4 rounded-md bg-blue-50 border border-blue-200">
@@ -566,21 +1614,21 @@ const AdminDashboard: React.FC = () => {
 
       {/* Menu Upload Modal */}
       {showMenuModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-4 md:p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Caricamento Menu PDF</h2>
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900">Caricamento Menu PDF</h2>
                 <button
                   onClick={() => setShowMenuModal(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
                 >
-                  <i className="fas fa-times text-xl"></i>
+                  <i className="fas fa-times text-lg md:text-xl"></i>
                 </button>
               </div>
             </div>
-            
-            <div className="p-6">
+
+            <div className="p-4 md:p-6">
               {uploadStatus && (
                 <div className="mb-4 p-4 rounded-md bg-green-50 border border-green-200">
                   <p className="text-green-800">{uploadStatus}</p>
@@ -648,22 +1696,22 @@ const AdminDashboard: React.FC = () => {
 
       {/* Metrics Modal */}
       {showMetricsModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-4 md:p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Performance e Statistiche</h2>
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900">Performance e Statistiche</h2>
                 <button
                   onClick={() => setShowMetricsModal(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
                 >
-                  <i className="fas fa-times text-xl"></i>
+                  <i className="fas fa-times text-lg md:text-xl"></i>
                 </button>
               </div>
             </div>
-            
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <div className="p-4 md:p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                 {/* Total Visits Tile */}
                 <div className="bg-white border border-gray-200 rounded-lg p-6">
                   <div className="flex items-center justify-between">

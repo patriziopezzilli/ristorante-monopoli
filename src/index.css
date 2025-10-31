@@ -124,6 +124,57 @@ body, h1, h2, h3, h4, h5, h6, p, span, div, a, button {
   animation: fade-in-up 1s ease-out 0.3s both;
 }
 
+/* Success animation styles */
+.success-checkmark {
+  position: relative;
+}
+
+.success-checkmark::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border: 2px solid #10b981;
+  border-top: none;
+  border-right: none;
+  transform: rotate(45deg);
+  animation: checkmark-draw 0.8s ease-out 0.3s both;
+}
+
+@keyframes checkmark-draw {
+  0% {
+    width: 0;
+    height: 0;
+    opacity: 1;
+  }
+  50% {
+    width: 10px;
+    height: 0;
+    opacity: 1;
+  }
+  100% {
+    width: 20px;
+    height: 20px;
+    opacity: 1;
+  }
+}
+
+@keyframes progress-fill {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-progress {
+  animation: progress-fill 2.5s ease-out forwards;
+}
+
 /* Force cache refresh */
 
 /* Migliora spazi tra sezioni su mobile - spaziatura molto generosa */
