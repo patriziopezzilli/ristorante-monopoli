@@ -24,8 +24,14 @@ const AdminDashboard: React.FC = () => {
   const [contentLanguage, setContentLanguage] = useState<'it' | 'en'>('it');
   const [contentSection, setContentSection] = useState<string>('menu');
   const [contentStatus, setContentStatus] = useState<string>('');
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentContents, setCurrentContents] = useState<Record<string, string>>({});
+
+  // Modal states
+  const [showContentModal, setShowContentModal] = useState(false);
+  const [showMenuModal, setShowMenuModal] = useState(false);
+  const [showMetricsModal, setShowMetricsModal] = useState(false);
 
   const sectionKeys: Record<string, string[]> = {
     nav: ['home', 'about', 'menu', 'gallery', 'contact'],
@@ -188,7 +194,14 @@ const AdminDashboard: React.FC = () => {
       }
       updateData[contentSection][key] = value;
 
-      await setDoc(docRef, updateData);
+      // Use updateDoc for partial updates (more secure than setDoc)
+      const updatePath = `${contentSection}.${key}`;
+      const updateObject = {
+        [updatePath]: value,
+        version: updateData.version
+      };
+      
+      await updateDoc(docRef, updateObject);
 
       // Update local state
       setCurrentContents(prev => ({ ...prev, [key]: value }));
@@ -197,17 +210,19 @@ const AdminDashboard: React.FC = () => {
       contentCache.invalidateCache(contentLanguage);
 
       // Dispatch event to update content across the app
-      console.log('🚀 Dispatching contentUpdated event for language:', contentLanguage);
       window.dispatchEvent(new CustomEvent('contentUpdated', { detail: { language: contentLanguage } }));
 
       // Track content edit
       analyticsService.trackContentEdit(contentSection, 'update');
 
-      setContentStatus('Contenuto aggiornato con successo!');
-      setTimeout(() => setContentStatus(''), 3000);
+      // Reset content status and show success animation
+      setContentStatus('');
+      setShowSuccessAnimation(true);
+      setTimeout(() => setShowSuccessAnimation(false), 3000);
     } catch (error) {
       console.error('Error updating content:', error);
-      setContentStatus('Errore nell\'aggiornamento del contenuto');
+      setContentStatus(`Errore nell'aggiornamento: ${error.message}`);
+      setTimeout(() => setContentStatus(''), 5000);
     } finally {
       setIsLoading(false);
     }
@@ -242,6 +257,14 @@ const AdminDashboard: React.FC = () => {
     console.log('🔄 useEffect triggered - contentLanguage:', contentLanguage, 'contentSection:', contentSection);
     loadCurrentContents();
   }, [contentLanguage, contentSection]);
+
+  // Load contents when content modal opens
+  useEffect(() => {
+    if (showContentModal) {
+      console.log('🔄 Modal opened - loading contents for language:', contentLanguage, 'section:', contentSection);
+      loadCurrentContents();
+    }
+  }, [showContentModal, contentLanguage, contentSection]);
 
   // Simulate PDF parsing - extract menu data from PDF
   const extractMenuFromPDF = (file: File, language: 'it' | 'en') => {
@@ -290,17 +313,6 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Loading Overlay */}
-      {isLoading && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-8 flex flex-col items-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-            <p className="text-gray-700 font-medium">Aggiornamento in corso...</p>
-            <p className="text-gray-500 text-sm mt-1">Non chiudere questa finestra</p>
-          </div>
-        </div>
-      )}
-
       <nav className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
@@ -337,9 +349,9 @@ const AdminDashboard: React.FC = () => {
         {/* Services Section */}
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Servizi</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Content Management Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => document.getElementById('content-section')?.scrollIntoView({ behavior: 'smooth' })}>
+            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => setShowContentModal(true)}>
               <div className="flex items-center">
                 <div className="flex-shrink-0">
                   <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -351,13 +363,13 @@ const AdminDashboard: React.FC = () => {
                   <p className="text-gray-600">Gestisci testi, immagini e contenuti del sito web</p>
                 </div>
                 <div className="ml-auto">
-                  <i className="fas fa-chevron-right text-gray-400"></i>
+                  <i className="fas fa-external-link-alt text-gray-400"></i>
                 </div>
               </div>
             </div>
 
             {/* PDF Menu Upload Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-green-300 transition-colors cursor-pointer" onClick={() => document.getElementById('menu-section')?.scrollIntoView({ behavior: 'smooth' })}>
+            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-green-300 transition-colors cursor-pointer" onClick={() => setShowMenuModal(true)}>
               <div className="flex items-center">
                 <div className="flex-shrink-0">
                   <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -369,87 +381,212 @@ const AdminDashboard: React.FC = () => {
                   <p className="text-gray-600">Carica e aggiorna il menu del ristorante</p>
                 </div>
                 <div className="ml-auto">
-                  <i className="fas fa-chevron-right text-gray-400"></i>
+                  <i className="fas fa-external-link-alt text-gray-400"></i>
+                </div>
+              </div>
+            </div>
+
+            {/* Performance Metrics Tile */}
+            <div className="bg-white border border-gray-200 rounded-lg p-6 hover:border-purple-300 transition-colors cursor-pointer" onClick={() => setShowMetricsModal(true)}>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <i className="fas fa-chart-line text-2xl text-purple-600"></i>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Performance</h3>
+                  <p className="text-gray-600">Monitora visite e statistiche del sito</p>
+                </div>
+                <div className="ml-auto">
+                  <i className="fas fa-external-link-alt text-gray-400"></i>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Metrics Section */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Performance</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Total Visits Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
+      </div>
+
+      {/* Content Management Modal */}
+      {showContentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Visite Totali</p>
-                  <p className="text-3xl font-bold text-gray-900">{metrics.totalVisits.toLocaleString()}</p>
-                  <p className="text-sm text-green-600 mt-1">
-                    <i className="fas fa-arrow-up mr-1"></i>
-                    +12% questo mese
-                  </p>
-                </div>
-                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
-                  <i className="fas fa-eye text-2xl text-blue-600"></i>
-                </div>
-              </div>
-              {/* Simple chart bars */}
-              <div className="mt-4 flex items-end space-x-1">
-                {[40, 60, 45, 80, 65, 90, 75].map((height, index) => (
-                  <div key={index} className="flex-1">
-                    <div 
-                      className="bg-blue-200 rounded-t" 
-                      style={{ height: `${height}%`, minHeight: '20px' }}
-                    ></div>
-                  </div>
-                ))}
+                <h2 className="text-2xl font-bold text-gray-900">Gestione Contenuti Sito</h2>
+                <button
+                  onClick={() => setShowContentModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="fas fa-times text-xl"></i>
+                </button>
               </div>
             </div>
-
-            {/* Menu Views Tile */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Visualizzazioni Menu</p>
-                  <p className="text-3xl font-bold text-gray-900">{metrics.menuViews.toLocaleString()}</p>
-                  <p className="text-sm text-green-600 mt-1">
-                    <i className="fas fa-arrow-up mr-1"></i>
-                    +8% questo mese
-                  </p>
+            
+            <div className="p-6">
+              {/* Error Status */}
+              {contentStatus && !showSuccessAnimation && (
+                <div className="mb-4 p-4 rounded-md bg-blue-50 border border-blue-200">
+                  <p className="text-blue-800">{contentStatus}</p>
                 </div>
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                  <i className="fas fa-utensils text-2xl text-green-600"></i>
+              )}
+
+              {/* Language Toggle */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">Lingua</label>
+                <div className="flex bg-gray-100 rounded-lg p-1 w-fit">
+                  <button
+                    onClick={() => setContentLanguage('it')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      contentLanguage === 'it'
+                        ? 'bg-white text-gray-900 border border-gray-300'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Italiano
+                  </button>
+                  <button
+                    onClick={() => setContentLanguage('en')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      contentLanguage === 'en'
+                        ? 'bg-white text-gray-900 border border-gray-300'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    English
+                  </button>
                 </div>
               </div>
-              {/* Simple chart bars */}
-              <div className="mt-4 flex items-end space-x-1">
-                {[30, 50, 35, 70, 55, 80, 65].map((height, index) => (
-                  <div key={index} className="flex-1">
-                    <div 
-                      className="bg-green-200 rounded-t" 
-                      style={{ height: `${height}%`, minHeight: '20px' }}
-                    ></div>
+
+              {/* Section Select */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
+                <select
+                  value={contentSection}
+                  onChange={(e) => {
+                    console.log('📝 Section changed to:', e.target.value);
+                    setContentSection(e.target.value);
+                  }}
+                  className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="nav">Navigazione</option>
+                  <option value="hero">Hero</option>
+                  <option value="about">Chi Siamo</option>
+                  <option value="menu">Menu</option>
+                  <option value="contact">Contatti</option>
+                  <option value="footer">Footer</option>
+                </select>
+              </div>
+
+              {/* Content Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {sectionKeys[contentSection]?.map((key) => (
+                  <div key={key} className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 capitalize">
+                      {key.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    </label>
+                    <input
+                      type="text"
+                      value={currentContents[key] || ''}
+                      onChange={(e) => {
+                        const newContents = { ...currentContents };
+                        newContents[key] = e.target.value;
+                        setCurrentContents(newContents);
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder={`Inserisci il testo per ${key}...`}
+                    />
                   </div>
                 ))}
+              </div>
+
+              {/* Save Button */}
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={async () => {
+                    setIsLoading(true);
+                    setContentStatus('Aggiornamento in corso...');
+                    
+                    try {
+                      // Save all fields for current section and language
+                      const promises = sectionKeys[contentSection]?.map(key => {
+                        const value = currentContents[key] || '';
+                        if (value.trim()) {
+                          return handleUpdateContent(key, value);
+                        }
+                        return Promise.resolve();
+                      }).filter(Boolean) || [];
+
+                      await Promise.all(promises);
+                      
+                      setContentStatus('');
+                      setShowSuccessAnimation(true);
+                      setTimeout(() => {
+                        setShowSuccessAnimation(false);
+                        setShowContentModal(false);
+                      }, 2000);
+                    } catch (error) {
+                      console.error('Error saving content:', error);
+                      setContentStatus('Errore durante il salvataggio');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  disabled={isLoading}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-6 rounded-lg transition duration-200 flex items-center"
+                >
+                  {isLoading ? (
+                    <>
+                      <i className="fas fa-spinner fa-spin mr-2"></i>
+                      Salvataggio...
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-save mr-2"></i>
+                      Salva Modifiche
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                <h4 className="text-sm font-medium text-yellow-800 mb-2">💡 Sistema Cache</h4>
+                <ul className="text-sm text-yellow-700 space-y-1">
+                  <li>• Cache automatica: 15 giorni di durata</li>
+                  <li>• Invalidazione: Quando modifichi, la cache si aggiorna</li>
+                  <li>• Versioning: Ogni modifica incrementa la versione per forzare aggiornamenti</li>
+                  <li>• Fallback: Se offline, usa dati cached anche se scaduti</li>
+                </ul>
               </div>
             </div>
           </div>
         </div>
+      )}
 
-        {/* Menu Upload Section */}
-        <div id="menu-section" className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Caricamento Menu PDF</h2>
-          
-          {uploadStatus && (
-            <div className="mb-4 p-4 rounded-md bg-green-50 border border-green-200">
-              <p className="text-green-800">{uploadStatus}</p>
+      {/* Menu Upload Modal */}
+      {showMenuModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-900">Caricamento Menu PDF</h2>
+                <button
+                  onClick={() => setShowMenuModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="fas fa-times text-xl"></i>
+                </button>
+              </div>
             </div>
-          )}
+            
+            <div className="p-6">
+              {uploadStatus && (
+                <div className="mb-4 p-4 rounded-md bg-green-50 border border-green-200">
+                  <p className="text-green-800">{uploadStatus}</p>
+                </div>
+              )}
 
-          <div className="bg-white border border-gray-200 overflow-hidden sm:rounded-md">
-            <div className="px-4 py-5 sm:p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {menuUploads.map((upload) => (
                   <div key={upload.language} className="border border-gray-200 rounded-lg p-6">
@@ -506,122 +643,123 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
           </div>
-        {/* Content Management Section */}
-        <div id="content-section" className="mt-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Gestione Contenuti Sito</h2>
-          
-          {contentStatus && (
-            <div className="mb-4 p-4 rounded-md bg-blue-50 border border-blue-200">
-              <p className="text-blue-800">{contentStatus}</p>
-            </div>
-          )}
+        </div>
+      )}
 
-          <div className="bg-white border border-gray-200 overflow-hidden sm:rounded-md">
-            <div className="px-4 py-5 sm:p-6">
-              {/* Language Toggle */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-3">Lingua</label>
-                <div className="flex bg-gray-100 rounded-lg p-1 w-fit">
-                  <button
-                    onClick={() => setContentLanguage('it')}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      contentLanguage === 'it'
-                        ? 'bg-white text-gray-900 border border-gray-300'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    Italiano
-                  </button>
-                  <button
-                    onClick={() => setContentLanguage('en')}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      contentLanguage === 'en'
-                        ? 'bg-white text-gray-900 border border-gray-300'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    English
-                  </button>
+      {/* Metrics Modal */}
+      {showMetricsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-900">Performance e Statistiche</h2>
+                <button
+                  onClick={() => setShowMetricsModal(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="fas fa-times text-xl"></i>
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Total Visits Tile */}
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Visite Totali</p>
+                      <p className="text-3xl font-bold text-gray-900">{metrics.totalVisits.toLocaleString()}</p>
+                      <p className="text-sm text-green-600 mt-1">
+                        <i className="fas fa-arrow-up mr-1"></i>
+                        +12% questo mese
+                      </p>
+                    </div>
+                    <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                      <i className="fas fa-eye text-2xl text-blue-600"></i>
+                    </div>
+                  </div>
+                  {/* Simple chart bars */}
+                  <div className="mt-4 flex items-end space-x-1">
+                    {[40, 60, 45, 80, 65, 90, 75].map((height, index) => (
+                      <div key={index} className="flex-1">
+                        <div 
+                          className="bg-blue-200 rounded-t" 
+                          style={{ height: `${height}%`, minHeight: '20px' }}
+                        ></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Menu Views Tile */}
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Visualizzazioni Menu</p>
+                      <p className="text-3xl font-bold text-gray-900">{metrics.menuViews.toLocaleString()}</p>
+                      <p className="text-sm text-green-600 mt-1">
+                        <i className="fas fa-arrow-up mr-1"></i>
+                        +8% questo mese
+                      </p>
+                    </div>
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                      <i className="fas fa-utensils text-2xl text-green-600"></i>
+                    </div>
+                  </div>
+                  {/* Simple chart bars */}
+                  <div className="mt-4 flex items-end space-x-1">
+                    {[30, 50, 35, 70, 55, 80, 65].map((height, index) => (
+                      <div key={index} className="flex-1">
+                        <div 
+                          className="bg-green-200 rounded-t" 
+                          style={{ height: `${height}%`, minHeight: '20px' }}
+                        ></div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Section Select */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Sezione</label>
-                <select
-                  value={contentSection}
-                  onChange={(e) => {
-                    console.log('📝 Section changed to:', e.target.value);
-                    setContentSection(e.target.value);
-                  }}
-                  className="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="nav">Navigazione</option>
-                  <option value="hero">Hero</option>
-                  <option value="about">About</option>
-                  <option value="menu">Menu</option>
-                  <option value="contact">Contatti</option>
-                  <option value="footer">Footer</option>
-                </select>
-              </div>
-
-              {/* Content Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                {sectionKeys[contentSection]?.map((key) => (
-                  <div key={key} className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2 capitalize">
-                      {key.replace(/([A-Z])/g, ' $1').trim()}
-                    </label>
-                    <input
-                      type="text"
-                      value={currentContents[key] || ''}
-                      onChange={(e) => setCurrentContents(prev => ({ ...prev, [key]: e.target.value }))}
-                      placeholder={`Inserisci ${key}`}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {/* Save Button */}
-              <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    console.log('🚀 Save button clicked, contentSection:', contentSection, 'contentLanguage:', contentLanguage);
-                    
-                    // Save all fields
-                    if (!contentSection) {
-                      setContentStatus('Errore: seleziona una sezione prima di salvare');
-                      return;
-                    }
-                    
-                    sectionKeys[contentSection]?.forEach(key => {
-                      const value = currentContents[key] || '';
-                      if (value.trim()) {
-                        handleUpdateContent(key, value);
-                      }
-                    });
-                  }}
-                  className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-md text-sm transition duration-200"
-                >
-                  Salva Modifiche
-                </button>
-              </div>
-
-              <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-                <h4 className="text-sm font-medium text-yellow-800 mb-2">💡 Sistema Cache</h4>
-                <ul className="text-sm text-yellow-700 space-y-1">
-                  <li>• Cache automatica: 15 giorni di durata</li>
-                  <li>• Invalidazione: Quando modifichi, la cache si aggiorna</li>
-                  <li>• Versioning: Ogni modifica incrementa la versione per forzare aggiornamenti</li>
-                  <li>• Fallback: Se offline, usa dati cached anche se scaduti</li>
+              <div className="mt-6 p-4 bg-purple-50 border border-purple-200 rounded-md">
+                <h4 className="text-sm font-medium text-purple-800 mb-2">📊 Metriche in Tempo Reale</h4>
+                <ul className="text-sm text-purple-700 space-y-1">
+                  <li>• Visite totali: Numero di sessioni uniche sul sito</li>
+                  <li>• Visualizzazioni menu: Quante volte gli utenti hanno visto la sezione menu</li>
+                  <li>• Dati aggiornati: Ogni azione dell'utente viene tracciata automaticamente</li>
+                  <li>• Analytics: Integrazione con Firebase Analytics per insights dettagliati</li>
                 </ul>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      )}
+
+      {/* Success Animation Overlay */}
+      {showSuccessAnimation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 text-center">
+            <div className="success-animation mb-4">
+              <div className="checkmark-circle">
+                <div className="checkmark"></div>
+              </div>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Salvato con Successo!</h3>
+            <p className="text-gray-600">Le modifiche sono state applicate e il sito è stato aggiornato.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full mx-4 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <h3 className="text-lg font-semibold text-gray-900">Aggiornamento in corso...</h3>
+            <p className="text-gray-600 mt-2">Stiamo salvando le tue modifiche.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
